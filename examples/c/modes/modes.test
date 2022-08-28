@@ -1,0 +1,50 @@
+#! /bin/sh
+
+# Copyright (C) 2019-2022 Free Software Foundation, Inc.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+cat >input <<EOF
+"abc"
+EOF
+run 0 'Line 1: Parsed a string: abc'
+
+cat >input <<EOF
+/* comment */
+"abc"
+EOF
+run 0 'Line 2: Parsed a string: abc'
+
+cat >input <<EOF
+"He said, \"Is anyone out there?\""
+EOF
+run 0 'Line 1: Parsed a string: He said, "Is anyone out there?"'
+
+cat >input <<EOF
+/* a comment /* with */ nesting */
+"abc"
+EOF
+run 0 'Line 2: Parsed a string: abc'
+
+# Check the traces.
+run -noerr 0 'Line 2: Parsed a string: abc' -p
+
+cat >input <<EOF
+/* an
+unterminated
+comment
+EOF
+
+run 1 'err: 1.1-2 COMMENT_START is never terminated'
+

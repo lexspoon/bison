@@ -19,6 +19,8 @@
 
 %code requires
 {
+  #include "lex-mode.h"
+  #include "lex-gram.h"
   #include "symlist.h"
   #include "symtab.h"
 }
@@ -51,6 +53,8 @@
   #include "files.h"
   #include "getargs.h"
   #include "gram.h"
+  #include "lex-common.h"
+  #include "lex-mode.h"
   #include "named-ref.h"
   #include "reader.h"
   #include "scan-code.h"
@@ -59,13 +63,14 @@
 
   /* Pretend to be at least that version, to check features published
      in that version while developping it.  */
-  static const char* api_version = "3.8";
+  static const char* api_version = "3.9";
 
   static int current_prec = 0;
   static location current_lhs_loc;
   static named_ref *current_lhs_named_ref;
   static symbol *current_lhs_symbol;
   static symbol_class current_class = unknown_sym;
+  static lex_modeset *current_modeset;
 
   /** Set the new current left-hand side symbol, possibly common
    * to several right-hand side parts of rule.
@@ -203,6 +208,7 @@
   PERCENT_OUTPUT          "%output"
   PERCENT_PURE_PARSER     "%pure-parser"
   PERCENT_REQUIRE         "%require"
+  PERCENT_IN_MODES        "%in-modes"
   PERCENT_SKELETON        "%skeleton"
   PERCENT_START           "%start"
   PERCENT_TOKEN_TABLE     "%token-table"
@@ -212,19 +218,32 @@
   BRACED_CODE       "{...}"
   BRACED_PREDICATE  "%?{...}"
   BRACKETED_ID      _("[identifier]")
+  CARET             "^"
   CHAR_LITERAL      _("character literal")
   COLON             ":"
+  COMMA             ","
+  DOLLAR            "$"
+  DOT               "."
   EPILOGUE          _("epilogue")
   EQUAL             "="
-  ID                _("identifier")
   ID_COLON          _("identifier:")
+  ID                _("identifier")
+  LPAREN            "("
+  MINUS             "-"
+  NL                "\n"    /* These are explicit inside %%tokens */
   PERCENT_PERCENT   "%%"
+  PERCENT_PERCENT_TOKENS   "%%tokens"
   PIPE              "|"
+  PLUS              "+"
   PROLOGUE          "%{...%}"
+  QUESTION          "?"
+  RIGHT_ARROW       "->"
+  RPAREN            ")"
   SEMICOLON         ";"
-  TAG               _("<tag>")
+  STAR              "*"
   TAG_ANY           "<*>"
   TAG_NONE          "<>"
+  TAG               _("<tag>")
 
  /* Experimental feature, don't rely on it.  */
 %code pre-printer  {tron (yyo);}
@@ -260,6 +279,15 @@
 %printer { symbol_list_syms_print ($$, yyo); } <symbol_list*>
 
 %type <named_ref*> named_ref.opt
+
+%type <lex_apattern*> apattern
+%type <lex_pattern*> pattern sequence_pattern atomic_pattern character_class cclass_members
+%token <bool> CHARACTER_CLASS_START "["
+%token <bool> CHARACTER_CLASS_END "]"
+%token <ucs4_t> CHARACTER_CLASS_MEMBER _("character class member")
+%type <lex_actions*> lexactions.opt lexactions lexaction
+%type <lex_modeset*> mode_list
+%type <lex_mode_ref*> mode_ref
 
 /*---------.
 | %param.  |
@@ -307,7 +335,7 @@
 %%
 
 input:
-  prologue_declarations "%%" grammar epilogue.opt
+  prologue_declarations "%%" grammar lexer.opt epilogue.opt
 ;
 
 
@@ -724,6 +752,200 @@ named_ref.opt:
 | BRACKETED_ID   { $$ = named_ref_new ($1, @1); }
 ;
 
+
+        /*-------------------------------------------.
+        | The lexer section: between %%tokens and %% |
+        `-------------------------------------------*/
+
+lexer.opt:
+  %empty
+  | lexer       {
+    lex_modeset_free (current_modeset);
+    lex_section_finished (&@1);
+  }
+;
+
+lexer:
+  lexer_header nls.opt lexer_tlds nls.opt
+| lexer_header nls.opt // Empty lexer
+;
+
+lexer_header: "%%tokens"
+  {
+    lex_check_language (&@1);
+    muscle_percent_define_ensure ("locations", @1, true);
+
+    // Create the initial mode
+    lex_mode *mode = lex_mode_lookup (uniqstr_new ("INITIAL"));
+    aver (mode->index == 0);
+    mode->has_rule_stanza = true;
+
+    current_modeset = lex_modeset_new ();
+    lex_modeset_add (current_modeset, 0);
+  }
+;
+
+// A non-empty sequence of newlines
+nls: NL | nls NL;
+
+// Optional newlines
+nls.opt: %empty | nls;
+
+// A non-empty sequence of top-level definitions
+lexer_tlds:
+  lexer_tld
+| lexer_tlds nls lexer_tld
+| lexer_tlds ";" nls.opt lexer_tld  
+;
+
+// Top-level declarations
+lexer_tld:
+  in_modes
+| lexer_rule;
+
+// A %in-modes declaration
+in_modes:
+  "%in-modes"  mode_list
+    {
+      lex_modeset_free (current_modeset);
+      current_modeset = $2;
+    }
+| "%in-modes" "(" mode_list ")"
+    {
+      lex_modeset_free (current_modeset);
+      current_modeset = $3;
+    }
+;
+
+mode_list:
+  mode_ref
+  {
+    $$ = lex_modeset_new ();
+    lex_modeset_add ($$, $1->mode->index);
+    lex_rule_stanza_mode_refs_add ($1);
+  }
+| mode_list mode_ref
+  {
+    $$ = $1;
+    lex_modeset_add ($$, $2->mode->index);
+    lex_rule_stanza_mode_refs_add ($2);
+  }
+;
+
+mode_ref:
+  ID
+    {
+      $$ = lex_mode_ref_new($1, &@1);
+    }
+;
+
+// A rule definition
+lexer_rule:
+id ":" apattern lexactions.opt
+    {
+      symbol_class_set($1, token_sym, @1, true);
+      lex_add_tokendef($1, $3, $4, lex_modeset_dup (current_modeset), &@1, &@3);
+    }
+| error ";"
+    {
+      yyerrok;
+    }
+| error NL
+    {
+      yyerrok;
+    }
+;
+
+// A pattern with anchors around it
+apattern:
+  pattern { $$ = lex_apattern_new ($1, false, false); }
+| "^" pattern { $$ = lex_apattern_new ($2, true, false); }
+| pattern "$" { $$ = lex_apattern_new ($1, false, true); }
+| "^" pattern "$" { $$ = lex_apattern_new ($2, true, true); }
+;
+
+pattern:
+sequence_pattern
+| pattern PIPE sequence_pattern { $$ = lex_alternate($1, $3); }
+;
+
+sequence_pattern:
+  atomic_pattern
+| sequence_pattern atomic_pattern { $$ = lex_sequence($1, $2); }
+;
+
+atomic_pattern:
+  STRING  { $$ = lex_literal (unquote ($1), &@1); }
+| character_class
+| DOT { $$ = lex_dot (); }
+| LPAREN pattern RPAREN { $$ = $2; }
+| atomic_pattern STAR { $$ = lex_star ($1); }
+| atomic_pattern PLUS  { $$ = lex_plus ($1); }
+| atomic_pattern QUESTION { $$ = lex_optional ($1); }
+;
+
+character_class:
+  CHARACTER_CLASS_START cclass_members CHARACTER_CLASS_END {
+    $$ = $2;
+    $$->charclass_inverted_p = $1;
+    if ($3)
+      {
+        lex_extend_charclass ($$, '-', '-');
+      }
+    if (!$1 && $$->ncranges == 0)
+      {
+        location loc = { @1.start, @3.end };
+        complain (&loc, complaint, _("character class cannot be empty"));
+      }
+  }
+;
+
+cclass_members:
+  %empty { $$ = lex_charclass(); }
+| "-"
+  {
+    $$ = lex_charclass ();
+    lex_extend_charclass ($$, '-', '-');
+  }
+| cclass_members CHARACTER_CLASS_MEMBER
+  { lex_extend_charclass ($1, $2, $2); $$ = $1; }
+| cclass_members CHARACTER_CLASS_MEMBER "-" CHARACTER_CLASS_MEMBER
+  {
+    if ($2 > $4)
+      {
+        location loc = { @2.start, @4.end };
+        complain (&loc, complaint, "range is out of order");
+        lex_extend_charclass ($1, $4, $2);
+      }
+    else
+      {
+        lex_extend_charclass ($1, $2, $4);
+      }
+
+    $$ = $1;
+  }
+| cclass_members error
+;
+
+lexactions.opt:
+  %empty { $$ = NULL; }
+  | "->" nls.opt lexactions { $$ = $3; }
+;
+
+lexactions:
+  lexaction
+| lexactions "," lexaction
+  { $$ = $1; lex_actions_merge ($1, $3, @3); free ($3); }
+;
+
+lexaction:
+  ID
+  { $$ = lex_actions_create0($1, &@1); }
+| ID "(" ID ")"
+  { $$ = lex_actions_create1($1, &@1, $3, NULL, &@3); }
+| ID "(" STRING ")"
+  { $$ = lex_actions_create1($1, &@1, NULL, unquote ($3), &@3); }
+;
 
 /*---------------------.
 | variable and value.  |
@@ -1193,6 +1415,7 @@ unquote (const char *cp)
 {
 #define GROW(Char)                              \
   obstack_1grow (&obstack_for_unquote, Char);
+  
   for (++cp; *cp && *cp != '"'; ++cp)
     switch (*cp)
       {
@@ -1227,6 +1450,9 @@ unquote (const char *cp)
           case 'r': GROW ('\r'); break;
           case 't': GROW ('\t'); break;
           case 'v': GROW ('\v'); break;
+          case '"': GROW ('"'); break;
+          case '\'': GROW ('\''); break;
+          case '\\': GROW ('\\'); break;
 
           case 'x':
             {
@@ -1241,7 +1467,47 @@ unquote (const char *cp)
               GROW (c);
               break;
             }
+
+          case 'u': case 'U':
+            {
+              int c;
+              if (*cp == 'u')
+                {
+                  sscanf(cp + 1, "%4x", &c);
+                  cp += 4;
+                }
+              else
+                {
+                  sscanf(cp + 1, "%8x", &c);
+                  cp += 8;
+                }
+                  
+              if (c < 0x80)
+                {
+                  GROW (c);
+                }
+              else if (c < 0x800)
+                {
+                  GROW ((c >> 6) | 0xC0);
+                  GROW (c & 0x3F | 0x80);
+                }
+              else if (c < 0x10000)
+                {
+                  GROW ((c >> 12) | 0xE0);
+                  GROW ((c >> 6) & 0x3F | 0x80);
+                  GROW (c & 0x3F | 0x80);
+                }
+              else
+                {
+                  GROW ((c >> 18) | 0xF0);
+                  GROW ((c >> 12) & 0x3F | 0x80);
+                  GROW ((c >> 6) & 0x3F | 0x80);
+                  GROW (c & 0x3F | 0x80);
+                }
+            }
+            break;
           }
+
         break;
 
       default:

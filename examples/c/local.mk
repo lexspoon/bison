@@ -20,7 +20,9 @@ include %D%/bistromathic/local.mk
 include %D%/calc/local.mk
 include %D%/glr/local.mk
 include %D%/lexcalc/local.mk
+include %D%/lexicalc/local.mk
 include %D%/mfcalc/local.mk
+include %D%/modes/local.mk
 include %D%/pushcalc/local.mk
 include %D%/reccalc/local.mk
 include %D%/rpcalc/local.mk

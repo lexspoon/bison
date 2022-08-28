@@ -1159,6 +1159,14 @@ b4_define_flag_if([union])
 b4_define_flag_if([variant])
 
 
+# b4_lex_if(IF-TRUE, [IF-FALSE])
+# -----------------------
+# Include code conditionally based on whether lexer
+# generation is enabled
+
+m4_define([b4_lex_if], m4_ifdef([b4_lex_enabled], [$1], [$2]))
+
+
 ## ----------------------------------------------------------- ##
 ## After processing the skeletons, check that all the user's   ##
 ## %define variables and %code qualifiers were used by Bison.  ##

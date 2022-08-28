@@ -109,6 +109,7 @@ enum trace
     trace_closure   = 1 << 14, /**< Input/output of closure(). */
     trace_locations = 1 << 15, /**< Full display of locations. */
     trace_cex       = 1 << 16, /**< Counterexample generation */
+    trace_lex       = 1 << 17, /**< Lexer generation */
     trace_all       = ~0       /**< All of the above.  */
   };
 /** What debug items bison displays during its run.  */

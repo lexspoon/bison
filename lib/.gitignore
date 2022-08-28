@@ -67,6 +67,7 @@
 /configmake.h
 /diffseq.h
 /dirent-private.h
+/dirent.h
 /dirent.in.h
 /dirfd.c
 /dirname-lgpl.c
@@ -164,6 +165,8 @@
 /gl_anytreehash_list2.h
 /gl_array_list.c
 /gl_array_list.h
+/gl_carray_list.c
+/gl_carray_list.h
 /gl_hash_map.c
 /gl_hash_map.h
 /gl_linked_list.c

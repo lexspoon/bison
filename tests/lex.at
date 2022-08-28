@@ -1,0 +1,2499 @@
+# Lexer generation
+
+# Copyright (C) 2020-2022 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+AT_BANNER([[Lexing.]])
+
+## --------------------- ##
+## Calculator with lexer ##
+## --------------------- ##
+
+AT_SETUP([Calculator with lexer])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS
+
+AT_DATA_GRAMMAR([[calc.y]],
+[[
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%define api.value.type union
+%type <int> expr num
+
+%%
+program: expr NL { printf ("%d", $1); }
+
+expr: expr PLUS num  { $$ = $1 + $3; }
+    | expr MINUS num { $$ = $1 - $3; }
+    | num { $$ = $1; }
+
+num: NUM { $$ = atoi($1); }
+
+%%tokens
+NUM: [0-9]+
+PLUS: "+"
+MINUS: "-"
+NL: "\n"
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]], [[3+10-1
+]])
+
+AT_BISON_CHECK([[-o calc.c calc.y]], 0)
+
+AT_COMPILE([[calc]])
+
+AT_PARSER_CHECK([[calc < in]], 0, [[12]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## ------------------------------ ##
+## Two parsers in the same binary ##
+## ------------------------------ ##
+
+AT_SETUP([Two parsers in the same binary])
+AT_KEYWORDS([lexing])
+
+AT_BISON_OPTION_PUSHDEFS([%%tokens %define api.prefix {ids_}])
+AT_DATA_GRAMMAR([[ids.y]],
+[[
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%define api.prefix {ids_}
+%define api.input.kind string
+
+%%
+program:
+  %empty
+| program ID { printf ("%d:%d %s\n", @2.first_line, @2.first_column, $2); }
+;
+
+%%tokens
+ID: [a-z]+
+WS: [ \r\n]+ -> skip
+
+%in-modes INITIAL COMMENT
+COMMENT_START: "/*" -> mode-push(COMMENT), expect-mode-pop, skip
+
+%in-modes COMMENT
+COMMENT_CONTENT: . -> skip
+%%
+]AT_YYERROR_DEFINE[
+]])
+AT_BISON_OPTION_POPDEFS
+
+AT_BISON_OPTION_PUSHDEFS([%%tokens %define api.prefix {nums_}])
+AT_DATA_GRAMMAR([[nums.y]],
+[[
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%define api.prefix {nums_}
+%define api.input.kind string
+
+%%
+program:
+  %empty
+| program NUM { printf ("%d:%d %s\n", @2.first_line, @2.first_column, $2); }
+;
+
+%%tokens
+NUM: [0-9]+
+WS: [ \r\n]+ -> skip
+
+%in-modes INITIAL COMMENT
+COMMENT_START: "/*" -> mode-push(COMMENT), expect-mode-pop, skip
+
+%in-modes COMMENT
+COMMENT_CONTENT: . -> skip
+%%
+]AT_YYERROR_DEFINE[
+]])
+AT_BISON_OPTION_POPDEFS
+
+AT_DATA([[main.c]],
+[[#include <stdio.h>
+#include "ids.h"
+#include "nums.h"
+
+int main ()
+{
+  ids_in = "foo bar baz";
+  ids_parse ();
+  nums_in = "111 222 333";
+  nums_parse ();
+  return 0;
+}
+]])
+
+AT_BISON_CHECK([[ids.y -o ids.c -H]], 0)
+AT_BISON_CHECK([[nums.y -o nums.c -H]], 0)
+
+AT_COMPILE([[main]], [[main.c ids.c nums.c]])
+
+AT_PARSER_CHECK([[main]], 0,
+[[1:1 foo
+1:5 bar
+1:9 baz
+1:1 111
+1:5 222
+1:9 333
+]])
+
+AT_CLEANUP
+
+
+## -------------------------- ##
+## Java is unsupported        ##
+## -------------------------- ##
+
+AT_SETUP([Java is unsupported])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[calc.y]],
+[[
+%language "Java"
+
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%define api.value.type union
+%type <int> expr num
+
+%%
+program: expr NL { printf ("%d", $1); }
+
+expr: expr PLUS num  { $$ = $1 + $3; }
+    | expr MINUS num { $$ = $1 - $3; }
+    | num { $$ = $1; }
+
+num: NUM { $$ = atoi($1); }
+
+%%tokens
+NUM: [0-9]+
+PLUS: "+"
+MINUS: "-"
+NL: "\n"
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]], [[3+10-1
+]])
+
+AT_BISON_CHECK([[-o calc.c calc.y]], 1, [],
+[calc.y:39.1-8: error: A %%tokens section is not supported for language java
+])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## ----------------------------------- ##
+## Pure parsers are unsupported        ##
+## ----------------------------------- ##
+
+AT_SETUP([Pure parsers are unsupported])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[calc.y]],
+[[
+%define api.pure full
+%define api.value.type union
+%type <int> expr num
+
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%%
+program: expr NL { printf ("%d", $1); }
+
+expr: expr PLUS num  { $$ = $1 + $3; }
+    | expr MINUS num { $$ = $1 - $3; }
+    | num { $$ = $1; }
+
+num: NUM { $$ = atoi($1); }
+
+%%tokens
+NUM: [0-9]+
+PLUS: "+"
+MINUS: "-"
+NL: "\n"
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]], [[3+10-1
+]])
+
+AT_BISON_CHECK([[-o calc.c calc.y]], 1, [],
+[calc.y: fatal error: A %%tokens section is not supported for a pure parser
+])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+## ----------------------------------- ##
+## Push parsers are unsupported        ##
+## ----------------------------------- ##
+
+AT_SETUP([Push parsers are unsupported])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[calc.y]],
+[[
+%define api.push-pull push
+%define api.value.type union
+%type <int> expr num
+
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%%
+program: expr NL { printf ("%d", $1); }
+
+expr: expr PLUS num  { $$ = $1 + $3; }
+    | expr MINUS num { $$ = $1 - $3; }
+    | num { $$ = $1; }
+
+num: NUM { $$ = atoi($1); }
+
+%%tokens
+NUM: [0-9]+
+PLUS: "+"
+MINUS: "-"
+NL: "\n"
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]], [[3+10-1
+]])
+
+AT_BISON_CHECK([[-o calc.c calc.y]], 1, [],
+[calc.y: fatal error: A %%tokens section is not supported for a push parser
+])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## ------------ ##
+## Skip actions ##
+## ------------ ##
+
+AT_SETUP([Skip actions])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[calc.y]],
+[[
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%define api.value.type union
+%type <int> expr num
+
+%%
+program: expr NL { printf ("%d", $1); }
+
+expr: expr PLUS num  { $$ = $1 + $3; }
+    | expr MINUS num { $$ = $1 - $3; }
+    | num { $$ = $1; }
+
+num: NUM { $$ = atoi($1); }
+
+%%tokens
+NUM: [0-9]+
+PLUS: "+"
+MINUS: "-"
+NL: "\n"
+WS: [ \t]+ -> skip
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]], [[3 + 10 - 1
+]])
+
+AT_BISON_CHECK([[-o calc.c calc.y]], 0)
+
+AT_COMPILE([[calc]])
+
+AT_PARSER_CHECK([[calc < in]], 0, [[12]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+## ------------- ##
+## Error actions ##
+## ------------- ##
+
+AT_SETUP([Error actions])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%%
+tokens: %empty | tokens token | tokens error;
+
+token:
+  ID  { printf ("ID %s\n", $1); }
+| NUM { printf ("NUM %s\n", $1); }
+;
+
+%%tokens
+ID: [a-z][a-z0-9_]*
+NUM: [0-9]+
+
+NUMID: [0-9]+[a-z][a-z0-9_]* -> error("number has trailing letters")
+
+WS: [ \n]+ -> skip
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]],
+[[123
+abc
+123abc
+456
+def
+]])
+
+AT_BISON_CHECK([[parse.y -o parse.c]], 0)
+
+AT_COMPILE([[parse]])
+
+AT_PARSER_CHECK([[parse < in]], 0,
+[[NUM 123
+ID abc
+NUM 456
+ID def
+]],
+[[3.1-6: number has trailing letters
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+## ---------------------- ##
+## Multiple error actions ##
+## ---------------------- ##
+
+AT_SETUP([Multiple error actions])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%%
+tokens: %empty | tokens token | tokens error;
+
+token:
+  ID  { printf ("ID %s\n", $1); }
+| NUM { printf ("NUM %s\n", $1); }
+;
+
+%%tokens
+ID: [a-z][a-z0-9_]*
+NUM: [0-9]+
+
+NUMID: [0-9]+[a-z][a-z0-9_]* -> error("error 1"), error("error 2")
+
+WS: [ \n]+ -> skip
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_BISON_CHECK([[parse.y -o parse.c]], 1, [],
+[[parse.y:37.51-66: error: multiple error actions
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+## --------------------------- ##
+## Error action not used alone ##
+## --------------------------- ##
+
+AT_SETUP([Error action not used alone])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%%
+tokens: %empty | tokens token | tokens error;
+
+token:
+  ID  { printf ("ID %s\n", $1); }
+| NUM { printf ("NUM %s\n", $1); }
+;
+
+%%tokens
+ID: [a-z][a-z0-9_]*
+NUM: [0-9]+
+
+NUMID: [0-9]+[a-z][a-z0-9_]* -> error("error 1"), skip
+
+WS: [ \n]+ -> skip
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_BISON_CHECK([[parse.y -o parse.c]], 1, [],
+[[parse.y:37.33-37: error: cannot combine error actions with other actions
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+## -----------------------##
+## Mode instead of string ##
+## -----------------------##
+
+AT_SETUP([Mode instead of string])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%%
+tokens: %empty | tokens token | tokens error;
+
+token:
+  ID  { printf ("ID %s\n", $1); }
+| NUM { printf ("NUM %s\n", $1); }
+;
+
+%%tokens
+ID: [a-z][a-z0-9_]*
+NUM: [0-9]+
+
+NUMID: [0-9]+[a-z][a-z0-9_]* -> error(ERROR)
+
+WS: [ \n]+ -> skip
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_BISON_CHECK([[parse.y -o parse.c]], 1, [],
+[[parse.y:37.39-43: error: expected a string literal
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+## -----------------------##
+## String instead of mode ##
+## -----------------------##
+
+AT_SETUP([String instead of mode])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%%
+tokens: %empty | tokens token | tokens error;
+
+token:
+  ID  { printf ("ID %s\n", $1); }
+| NUM { printf ("NUM %s\n", $1); }
+;
+
+%%tokens
+ID: [a-z][a-z0-9_]*
+NUM: [0-9]+
+
+NUMID: [0-9]+[a-z][a-z0-9_]* -> mode-change("INITIAL")
+
+WS: [ \n]+ -> skip
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_BISON_CHECK([[parse.y -o parse.c]], 1, [],
+[[parse.y:37.45-53: error: expected a mode name
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+## ------------ ##
+## Dot patterns ##
+## ------------ ##
+
+AT_SETUP([Dot patterns])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[dot.y]],
+[[
+%code {
+#include <stdio.h>
+]AT_YYERROR_DECLARE[
+}
+
+%%
+chars:
+  %empty
+| chars char
+| chars nl
+;
+
+char: CHAR { printf ("%s\n", $1); };
+nl: NL { printf ("\\n\n"); };
+
+%%tokens
+CHAR: .
+NL: "\n"
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]], [[abc
+]])
+
+AT_BISON_CHECK([[-o dot.c dot.y]], 0)
+
+AT_COMPILE([[dot]])
+
+AT_PARSER_CHECK([[dot < in]], 0,
+[[a
+b
+c
+\n
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+## ----------------- ##
+## Character classes ##
+## ----------------- ##
+
+AT_SETUP([Character classes])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+]AT_YYERROR_DECLARE[
+}
+
+%code {
+void
+print_token (const char *toktype, const char *toktext)
+{
+  fputs (toktype, stdout);
+  putc (' ', stdout);
+  for (const char *cp = toktext; *cp; cp++)
+    {
+      switch (*cp)
+      {
+        case '\a': fputs ("\\a", stdout); break;
+        case '\b': fputs ("\\b", stdout); break;
+        case '\f': fputs ("\\f", stdout); break;
+        case '\t': fputs ("\\t", stdout); break;
+        case '\n': fputs ("\\n", stdout); break;
+        case '\r': fputs ("\\r", stdout); break;
+        case '\v': fputs ("\\v", stdout); break;
+        case '\"': fputs ("\\\"", stdout); break;
+        case ' ': fputs ("SPACE", stdout); break;
+        default: putc (*cp, stdout);
+      }
+    }
+  putc ('\n', stdout);
+}
+}
+
+%%
+tokens: %empty | tokens token;
+
+token:
+  PAT1 { print_token ("PAT1", $1); }
+| PAT2 { print_token ("PAT2", $1); }
+| PAT3 { print_token ("PAT3", $1); }
+| PAT4 { print_token ("PAT4", $1); }
+| PAT5 { print_token ("PAT5", $1); }
+| PAT6 { print_token ("PAT6", $1); }
+| PAT7 { print_token ("PAT7", $1); }
+| PAT8 { print_token ("PAT8", $1); }
+| PAT9 { print_token ("PAT9", $1); }
+| PAT10 { print_token ("PAT10", $1); }
+| PAT11 { print_token ("PAT11", $1); }
+| PAT12 { print_token ("PAT12", $1); }
+| PAT13 { print_token ("PAT13", $1); }
+| NOMATCH { print_token ("NOMATCH", $1); }
+;
+
+%%tokens
+PAT1: "pat1_" [a-z0-9 ]
+PAT2: "pat2_" [!@#$%^&*(){}/?=+`~]
+PAT3: "pat3_" [\"\\\a\b\f\t\n\r\v\[\]\-]
+PAT4: "pat4_" [\u0061\U00000062]   // "a" and "b"
+PAT5: "pat5_" [^\n]
+PAT6: "pat6_" [^]
+PAT7: "pat7_" [^^]
+PAT8: "pat8_" [-a-z]
+PAT9: "pat9_" [^-a-z]
+PAT10: "pat10_" [a-z-]
+PAT11: "pat11_" [-]
+PAT12: "pat12_" [^-]
+PAT13: "pat13_" [--]
+NOMATCH: "pat" .*
+WS: [ \n]+ ->skip
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in.in]],
+[[pat1_a
+pat1_b
+pat1_z
+pat1_0
+pat1_5
+pat1_9
+pat1_SPACE
+pat1_A
+
+pat2_!
+pat2_@
+pat2_#
+pat2_$
+pat2_%
+pat2_^
+pat2_&
+pat2_*
+pat2_(
+pat2_)
+pat2_{
+pat2_}
+pat2_/
+pat2_?
+pat2_=
+pat2_+
+pat2_`
+pat2_~
+pat2_A
+
+pat3_\"
+pat3_\
+pat3_\a
+pat3_\b
+pat3_\f
+pat3_\t
+pat3_\n
+pat3_\r
+pat3_\v
+pat3_@<:@
+pat3_@:>@
+pat3_-
+pat3_A
+
+pat4_a
+pat4_b
+pat4_c
+
+pat5_a
+pat5_
+
+pat6_a
+pat6_
+
+pat6_5
+
+pat7_a
+pat7_^
+
+pat8_-
+pat8_b
+pat8_3
+
+pat9_3
+pat9_-
+pat9_b
+
+pat10_a
+pat10_-
+pat10_5
+
+pat11_-
+pat11_a
+
+pat12_a
+pat12_-
+
+pat13_-
+pat13_a
+]])
+
+AT_CHECK([[sed \
+  -e 's/\\"/"/' \
+  -e 's/\\\\/\\/' \
+  -e 's/\\a/\a/' \
+  -e 's/\\b/\x08/' \
+  -e 's/\\f/\f/' \
+  -e 's/\\t/\t/' \
+  -e 's/\\n/\n/' \
+  -e 's/\\r/\r/' \
+  -e 's/\\v/\v/' \
+  -e 's/SPACE/ /' \
+  < in.in > in]])
+
+AT_BISON_CHECK([[-o parse.c parse.y]], 0)
+
+AT_COMPILE([[parse]])
+
+AT_PARSER_CHECK([[parse < in]], 0,
+[[PAT1 pat1_a
+PAT1 pat1_b
+PAT1 pat1_z
+PAT1 pat1_0
+PAT1 pat1_5
+PAT1 pat1_9
+PAT1 pat1_SPACE
+NOMATCH pat1_A
+PAT2 pat2_!
+PAT2 pat2_@
+PAT2 pat2_#
+PAT2 pat2_$
+PAT2 pat2_%
+PAT2 pat2_^
+PAT2 pat2_&
+PAT2 pat2_*
+PAT2 pat2_(
+PAT2 pat2_)
+PAT2 pat2_{
+PAT2 pat2_}
+PAT2 pat2_/
+PAT2 pat2_?
+PAT2 pat2_=
+PAT2 pat2_+
+PAT2 pat2_`
+PAT2 pat2_~
+NOMATCH pat2_A
+PAT3 pat3_\"
+PAT3 pat3_\
+PAT3 pat3_\a
+PAT3 pat3_\b
+PAT3 pat3_\f
+PAT3 pat3_\t
+PAT3 pat3_\n
+PAT3 pat3_\r
+PAT3 pat3_\v
+PAT3 pat3_@<:@
+PAT3 pat3_@:>@
+PAT3 pat3_-
+NOMATCH pat3_A
+PAT4 pat4_a
+PAT4 pat4_b
+NOMATCH pat4_c
+PAT5 pat5_a
+NOMATCH pat5_
+PAT6 pat6_a
+PAT6 pat6_\n
+PAT6 pat6_5
+PAT7 pat7_a
+NOMATCH pat7_^
+PAT8 pat8_-
+PAT8 pat8_b
+NOMATCH pat8_3
+PAT9 pat9_3
+NOMATCH pat9_-
+NOMATCH pat9_b
+PAT10 pat10_a
+PAT10 pat10_-
+NOMATCH pat10_5
+PAT11 pat11_-
+NOMATCH pat11_a
+PAT12 pat12_a
+NOMATCH pat12_-
+PAT13 pat13_-
+NOMATCH pat13_a
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+## ------------------------- ##
+## Invalid character classes ##
+## ------------------------- ##
+
+AT_SETUP([Invalid character classes])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+]AT_YYERROR_DECLARE[
+}
+
+%%
+tokens: %empty | tokens token;
+
+token: PAT1 | PAT2 | PAT3 | PAT4 | PAT5 | PAT6;
+
+%%tokens
+PAT1: "pat1_" []
+PAT2: "pat2_" [\u33\U33]
+PAT3: "pat3_" [z-a]
+PAT4: "pat4_" [\o]
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+
+AT_BISON_CHECK([[-o parse.c parse.y]], 1, [],
+[[parse.y:30.15-16: error: character class cannot be empty
+parse.y:31.16-17: error: \u must be followed by four hex digits
+parse.y:31.20-21: error: \U must be followed by eight hex digits
+parse.y:32.16-18: error: range is out of order
+parse.y:33.16: error: unrecognized escape inside character class
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+## ------------------ ##
+## Anchored patterns  ##
+## ------------------ ##
+
+AT_SETUP([Anchored patterns])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[anchors.y]],
+[[
+%code {
+#include <stdio.h>
+]AT_YYERROR_DECLARE[
+}
+
+%code {
+static void
+print_match(const char *type, const char *text, YYLTYPE *loc)
+  {
+    printf ("%d:%d-%d:%d %s %s\n",
+            loc->first_line,
+            loc->first_column,
+            loc->last_line,
+            loc->last_column,
+            type,
+            text);
+  }
+}
+
+%%
+tokens: %empty | tokens token;
+
+token:
+  BOL { print_match ("BOL", $1, &@1); }
+| EOL { print_match ("EOL", $1, &@1); }
+| BOTH { print_match ("BOTH", $1, &@1); }
+| NEITHER { print_match ("NEITHER", $1, &@1); }
+| ID { print_match ("ID", $1, &@1); }
+;
+
+%%tokens
+// All four options for begin/end anchors
+BOTH: ^"abc"$
+BOL: ^"abc"
+EOL: "abc"$
+NEITHER: "abc"
+ID: [a-z]+
+
+WS: [ \n\r]+ ->skip
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_BISON_CHECK([[-o anchors.c anchors.y]], 0)
+
+AT_COMPILE([[anchors]])
+
+AT_DATA_NO_FINAL_EOL([[in.tmp]],
+[[abc
+abc def
+ abc
+ abc def
+abcdef
+abc\r
+abc
+abc]])
+
+AT_CHECK([[sed -e 's/\\r/\r/' < in.tmp > in]])
+
+AT_PARSER_CHECK([[anchors < in]], 0,
+[[1:1-1:3 BOTH abc
+2:1-2:3 BOL abc
+2:5-2:7 ID def
+3:2-3:4 EOL abc
+4:2-4:4 NEITHER abc
+4:6-4:8 ID def
+5:1-5:6 ID abcdef
+6:1-6:3 BOTH abc
+7:1-7:3 BOTH abc
+8:1-8:3 BOTH abc
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+## ------------------------------ ##
+## Locations with generated lexer ##
+## ------------------------------ ##
+
+AT_SETUP([Locations with generated lexer])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[words.y]],
+[[
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+]AT_YYERROR_DECLARE[
+}
+
+%define api.value.type union
+%type <char *> token
+
+%%
+words:
+  %empty
+| words token {
+  printf("%d:%d-%d:%d %s\n", @2.first_line, @2.first_column, @2.last_line, @2.last_column, $2);
+  free ($2);
+};
+
+token:
+  WORD { $$ = strdup ($1); } |
+  Z  { $$ = strdup ($1); } |
+  ZZZ { $$ = strdup ($1); };
+
+%%tokens
+Z: "z"
+ZZZ: "zzz"
+WORD: [a-y]+
+WS: [ \n]+ -> skip
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]],
+[[one two three
+four five six
+zzz zzzabc zzabc
+]])
+
+AT_BISON_CHECK([[-o words.c words.y]], 0)
+
+AT_COMPILE([[words]])
+
+AT_PARSER_CHECK([[words < in]], 0,
+[[1:1-1:3 one
+1:5-1:7 two
+1:9-1:13 three
+2:1-2:4 four
+2:6-2:9 five
+2:11-2:13 six
+3:1-3:3 zzz
+3:5-3:7 zzz
+3:8-3:10 abc
+3:12-3:12 z
+3:13-3:13 z
+3:14-3:16 abc
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## -------------- ##
+## UTF-8 decoding ##
+## -------------- ##
+
+AT_SETUP([UTF-8 decoding])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[dot.y]],
+[[
+%code {
+#include <stdio.h>
+]AT_YYERROR_DECLARE[
+}
+
+%%
+chars:
+  %empty
+| chars char
+| chars NL
+;
+
+// This rule will print one line of output
+// for one Unicode code point that was
+// detected with the "." pattern.
+// The rule needs a loop, despite the
+// text containing a single code point,
+// because the code point is re-encoded
+// into UTF-8 for running the action.
+char: CHAR {
+  const char *firstc = $1;
+  for (const char *cp = $1; *cp; cp++)
+    {
+      if (cp != firstc) printf(" ");
+      printf ("%2X", (unsigned char) *cp);
+    }
+  printf ("\n");
+};
+
+%%tokens
+CHAR: .   // A single Unicode code point
+NL: "\n"
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+# The following example characters need 2, 3, and 4 bytes,
+# respectively, when encoded in UTF-8.
+AT_DATA([[in]], [[é∀🌈
+]])
+
+AT_BISON_CHECK([[-o dot.c dot.y]], 0)
+
+AT_COMPILE([[dot]])
+
+AT_PARSER_CHECK([[dot < in]], 0,
+[[C3 A9
+E2 88 80
+F0 9F 8C 88
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## -------------- ##
+## Invalid UTF-8  ##
+## -------------- ##
+
+AT_SETUP([Invalid UTF-8])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+]AT_YYERROR_DECLARE[
+}
+
+%%
+chars:
+  %empty
+| chars char
+| chars NL
+;
+
+char: CHAR {
+  const char *firstc = $1;
+  for (const char *cp = $1; *cp; cp++)
+    {
+      if (cp != firstc) printf(" ");
+      printf ("%2X", (unsigned char) *cp);
+    }
+  printf ("\n");
+};
+
+%%tokens
+CHAR: .
+NL: "\n"
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_BISON_CHECK([[-o parse.c parse.y]], 0)
+
+AT_COMPILE([[parse]])
+
+# Sanity check that this parser handles valid text
+AT_CHECK([[echo abc > in]])
+
+AT_PARSER_CHECK([[parse < in]], 0,
+[[61
+62
+63
+]])
+
+# This example has 0xE9 followed by "abc\n".
+# In UTF-8, the 0xE9 is the beginning of a multi-byte
+# sequence, so it should be followed by another extension
+# byte. The character "a" is not an extension byte,
+# so this sequence isn't valid UTF-8.
+AT_CHECK([[echo -e "\xe9abc" > in]])
+
+AT_PARSER_CHECK([[parse < in]], 1, [],
+[[1.1: invalid UTF-8
+]])
+
+# 110 xxx xx   10xx xxxx
+# 110 000 01   1010 0001
+
+# This example encodes the letter "a", code point U_0061,
+# in two bytes instead of one. Since it could have been encoded
+# in one byte, this is an error.
+
+AT_CHECK([[echo -e "\xC1\xA1" > in]])
+AT_PARSER_CHECK([[parse < in]], 1, [],
+[[1.1: invalid UTF-8
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## -----------------##
+## Byte order marks ##
+## -----------------##
+
+AT_SETUP([Byte order marks])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[calc.y]],
+[[
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%define api.value.type union
+%type <int> expr num
+
+%%
+program: expr NL { printf ("%d", $1); }
+
+expr: expr PLUS num  { $$ = $1 + $3; }
+    | expr MINUS num { $$ = $1 - $3; }
+    | num { $$ = $1; }
+
+num: NUM { $$ = atoi($1); }
+
+%%tokens
+NUM: [0-9]+
+PLUS: "+"
+MINUS: "-"
+NL: "\n"
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+
+AT_DATA([[mkin.c]],
+[[#include <stdio.h>
+int main()
+  {
+    // A byte-order mark in UTF-8, followed by 3+4.
+    // The intended behavior is to skip the BOM.
+    printf("\xEF\xBB\xBF"  "3+4\n");
+  }
+]])
+
+AT_COMPILE([[mkin]])
+AT_CHECK([[./mkin > in]], 0)
+
+AT_BISON_CHECK([[-o calc.c calc.y]], 0)
+
+AT_COMPILE([[calc]])
+
+AT_PARSER_CHECK([[calc < in]], 0, [[7]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## ----------------------------- ##
+## Literal patterns with Unicode ##
+## ----------------------------- ##
+
+AT_SETUP([Literal patterns with UTF-8])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+
+]AT_YYERROR_DECLARE[
+}
+
+%code {
+static void
+print_match(const char *text, YYLTYPE *loc)
+  {
+    printf ("%d:%d-%d:%d %s\n",
+            loc->first_line,
+            loc->first_column,
+            loc->last_line,
+            loc->last_column,
+            text);
+  }
+}
+
+%%
+greek_stuff:
+  %empty
+| greek_stuff FORMULA { print_match ($2, &@2); }
+| greek_stuff SHORT_FORMULA { print_match ($2, &@2); }
+| greek_stuff ALPHA_BETA { print_match ($2, &@2); }
+| greek_stuff GAMMA_DELTA { print_match ($2, &@2); }
+| greek_stuff OTHER { print_match ($2, &@2); }
+;
+
+%%tokens
+FORMULA: "α ∧ ¬β = ¬(¬α ∨ β)"
+SHORT_FORMULA: "α ∧ ¬β"
+ALPHA_BETA: "\u03B1\u03B2"
+GAMMA_DELTA: "\U000003B3\U000003B4"
+WS: [ \n]+ -> skip
+COMMENT: "//" .* -> skip
+OTHER: .
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]],
+[[// Each pattern one time 
+α ∧ ¬β = ¬(¬α ∨ β)
+α ∧ ¬β
+αβ
+γδ
+
+// An almost match for the long pattern, forcing a lot of backup
+α ∧ ¬β = ¬(¬α ∨ β
+]])
+
+AT_BISON_CHECK([[-o parse.c parse.y]], 0)
+
+AT_COMPILE([[parse]])
+
+AT_PARSER_CHECK([[parse < in]], 0,
+[[2:1-2:18 α ∧ ¬β = ¬(¬α ∨ β)
+3:1-3:6 α ∧ ¬β
+4:1-4:2 αβ
+5:1-5:2 γδ
+8:1-8:6 α ∧ ¬β
+8:8-8:8 =
+8:10-8:10 ¬
+8:11-8:11 (
+8:12-8:12 ¬
+8:13-8:13 α
+8:15-8:15 ∨
+8:17-8:17 β
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## ------------- ##
+## Mode changing ##
+## ------------- ##
+
+AT_SETUP([Mode changing])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+
+]AT_YYERROR_DECLARE[
+}
+
+%code {
+static void
+print_token(const char *token_type, const char *text)
+  {
+    printf ("%s: %s\n", token_type, text);
+  }
+}
+
+%%
+tokens:
+  %empty
+| tokens ID { print_token ("ID", $2); }
+| tokens NUM { print_token ("NUM", $2); }
+| tokens STRING_START { print_token ("STRING_START", $2); }
+| tokens STRING_END { print_token ("STRING_END", $2); }
+| tokens STRING_ESCAPE_STRING { print_token ("STRING_ESCAPE_STRING", $2); }
+| tokens STRING_ESCAPE_ESCAPE { print_token ("STRING_ESCAPE_ESCAPE", $2); }
+| tokens STRING_CONTENT { print_token ("STRING_CONTENT", $2); }
+;
+
+%%tokens
+WS: [ \n]+ ->skip
+ID: [a-z]+
+NUM: [0-9]+
+STRING_START: "\"" ->mode-change(STRING)
+
+%in-modes STRING
+
+STRING_END: "\"" ->mode-change(INITIAL)
+
+STRING_ESCAPE_STRING: "\\\""
+STRING_ESCAPE_ESCAPE: "\\\\"
+STRING_CONTENT: .
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]],
+[[foo
+bar
+123
+"abc"
+"abc\"\\def"
+baz
+456
+]])
+
+AT_BISON_CHECK([[-o parse.c parse.y]], 0)
+
+AT_COMPILE([[parse]])
+
+AT_PARSER_CHECK([[parse < in]], 0,
+[[ID: foo
+ID: bar
+NUM: 123
+STRING_START: "
+STRING_CONTENT: a
+STRING_CONTENT: b
+STRING_CONTENT: c
+STRING_END: "
+STRING_START: "
+STRING_CONTENT: a
+STRING_CONTENT: b
+STRING_CONTENT: c
+STRING_ESCAPE_STRING: \"
+STRING_ESCAPE_ESCAPE: \\
+STRING_CONTENT: d
+STRING_CONTENT: e
+STRING_CONTENT: f
+STRING_END: "
+ID: baz
+NUM: 456
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## ----------------- ##
+## Mode push and pop ##
+## ----------------- ##
+
+AT_SETUP([Mode push and pop])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+
+]AT_YYERROR_DECLARE[
+}
+
+%code {
+static void
+print_token(const char *token_type, const char *text)
+  {
+    printf ("%s: %s\n", token_type, text);
+  }
+}
+
+%%
+tokens:
+  %empty
+| tokens ID { print_token ("ID", $2); }
+| tokens NUM { print_token ("NUM", $2); }
+;
+
+%%tokens
+WS: [ \n]+ ->skip
+ID: [a-z]+
+NUM: [0-9]+
+
+%in-modes INITIAL COMMENT
+COMMENT_START: "/*" ->mode-push(COMMENT), skip
+
+%in-modes COMMENT
+COMMENT_END: "*/" ->mode-pop, skip
+COMMENT_CONTENT: . | "\n" ->skip
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]],
+[[foo
+bar
+123
+/* abc */
+456
+/* def /* ghi */ jkl */
+789
+]])
+
+AT_BISON_CHECK([[-o parse.c parse.y]], 0)
+
+AT_COMPILE([[parse]])
+
+AT_PARSER_CHECK([[parse < in]], 0,
+[[ID: foo
+ID: bar
+NUM: 123
+NUM: 456
+NUM: 789
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## ------------------------ ##
+## Parenthesized mode lists ##
+## ------------------------ ##
+
+AT_SETUP([Parenthesized mode lists])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+
+]AT_YYERROR_DECLARE[
+}
+
+%code {
+static void
+print_token(const char *token_type, const char *text)
+  {
+    printf ("%s: %s\n", token_type, text);
+  }
+}
+
+%%
+tokens:
+  %empty
+| tokens ID { print_token ("ID", $2); }
+| tokens NUM { print_token ("NUM", $2); }
+;
+
+%%tokens
+WS: [ \n]+ ->skip
+ID: [a-z]+
+NUM: [0-9]+
+
+%in-modes (
+  INITIAL
+  COMMENT)
+COMMENT_START: "/*" ->mode-push(COMMENT), skip
+
+%in-modes COMMENT
+COMMENT_END: "*/" ->mode-pop, skip
+COMMENT_CONTENT: . | "\n" ->skip
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]],
+[[foo
+bar
+123
+/* abc */
+456
+/* def /* ghi */ jkl */
+789
+]])
+
+AT_BISON_CHECK([[-o parse.c parse.y]], 0)
+
+AT_COMPILE([[parse]])
+
+AT_PARSER_CHECK([[parse < in]], 0,
+[[ID: foo
+ID: bar
+NUM: 123
+NUM: 456
+NUM: 789
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## ------------------- ##
+## Mode stack overflow ##
+## ------------------- ##
+
+AT_SETUP([Mode stack overflow])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+
+]AT_YYERROR_DECLARE[
+}
+
+%code {
+static void
+print_token(const char *token_type, const char *text)
+  {
+    printf ("%s: %s\n", token_type, text);
+  }
+}
+
+%%
+tokens:
+  %empty
+| tokens ID { print_token ("ID", $2); }
+| tokens NUM { print_token ("NUM", $2); }
+;
+
+%%tokens
+WS: [ \n]+ ->skip
+ID: [a-z]+
+NUM: [0-9]+
+
+%in-modes (
+  INITIAL
+  COMMENT)
+COMMENT_START: "/*" ->mode-push(COMMENT), skip
+
+%in-modes COMMENT
+COMMENT_END: "*/" ->mode-pop, skip
+COMMENT_CONTENT: . | "\n" ->skip
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+
+AT_DATA([[mkin.c]],
+[[#include <stdio.h>
+int main()
+  {
+    printf ("abc\n");
+
+    // Way too many nested comments
+    for (int i = 0; i < 1000; i++)
+      {
+        printf ("/*\n");
+      }
+    for (int i = 0; i < 1000; i++)
+      {
+        printf ("*/\n");
+      }
+
+    printf ("def\n");
+  }
+]])
+
+AT_COMPILE([[mkin]])
+AT_CHECK([[./mkin > in]], 0)
+
+AT_BISON_CHECK([[-o parse.c parse.y]], 0)
+
+AT_COMPILE([[parse]])
+
+AT_PARSER_CHECK([[parse < in]], 1,
+[[ID: abc
+]],
+[[102.1-2: memory exhausted
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## -------------------- ##
+## Pop empty mode stack ##
+## -------------------- ##
+
+AT_SETUP([Pop empty mode stack])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+
+]AT_YYERROR_DECLARE[
+}
+
+%code {
+static void
+print_token(const char *token_type, const char *text)
+  {
+    printf ("%s: %s\n", token_type, text);
+  }
+}
+
+%%
+tokens:
+  %empty
+| tokens ID { print_token ("ID", $2); }
+| tokens NUM { print_token ("NUM", $2); }
+;
+
+%%tokens
+WS: [ \n]+ ->skip
+ID: [a-z]+
+NUM: [0-9]+
+
+%in-modes (
+  INITIAL
+  COMMENT)
+COMMENT_START: "/*" ->mode-change(COMMENT), skip
+
+%in-modes COMMENT
+COMMENT_END: "*/" ->mode-pop, skip
+COMMENT_CONTENT: . | "\n" ->skip
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]],
+[[foo
+/* comment */
+bar
+]])
+
+AT_BISON_CHECK([[-o parse.c parse.y]], 0)
+
+AT_COMPILE([[parse]])
+
+AT_PARSER_CHECK([[parse < in]], 1,
+[[ID: foo
+]],
+[[2.12-13: attempting to pop an empty mode stack
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## ------------------##
+## Unrecognized mode ##
+## ------------------##
+
+AT_SETUP([Unrecognized mode])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+
+]AT_YYERROR_DECLARE[
+}
+
+%%
+tokens:
+  %empty
+| tokens ID
+;
+
+%%tokens
+WS: [ \n]+ ->skip
+ID: [a-z]+
+
+%in-modes (
+  INITIAL
+  COMMENT)
+COMMENT_START: "/*" ->mode-push(COMMENTT), skip
+
+%in-modes COMMENT
+COMMENT_END: "*/" ->mode-pop, skip
+COMMENT_CONTENT: . | "\n" ->skip
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_BISON_CHECK([[-o parse.c parse.y]], 1, [],
+[parse.y:38.33-40: error: Unrecognized mode COMMENTT
+parse.y:37.3-9: warning: Mode COMMENT is unreachable [[-Wother]]
+parse.y:40.11-17: warning: Mode COMMENT is unreachable [[-Wother]]
+])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## -----------------##
+## Unreachable mode ##
+## -----------------##
+
+AT_SETUP([Unreachable mode])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+
+]AT_YYERROR_DECLARE[
+}
+
+%%
+tokens:
+  %empty
+| tokens ID { printf ("%s\n", $2); }
+;
+
+%%tokens
+WS: [ \n]+ ->skip
+ID: [a-z]+
+
+%in-modes COMMENT
+COMMENT_END: "*/" ->mode-pop, skip
+COMMENT_CONTENT: . | "\n" ->skip
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_BISON_CHECK([[-o parse.c parse.y]], 0, [],
+[parse.y:35.11-17: [warning:] Mode COMMENT is unreachable [[-Wother]]
+])
+
+AT_COMPILE([[parse]])
+
+AT_DATA([[in]], [[abc def
+]])
+
+AT_PARSER_CHECK([[parse < in]], 0, [[abc
+def
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+## ------------------------- ##
+## Unclosed comments allowed ##
+## ------------------------- ##
+
+AT_SETUP([Unclosed comments allowed])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+
+]AT_YYERROR_DECLARE[
+}
+
+%%
+tokens:
+  %empty
+| tokens ID { printf ("%s\n", $2); }
+;
+
+%%tokens
+WS: [ \n]+ ->skip
+ID: [a-z][a-z0-9]*
+
+%in-modes INITIAL COMMENT
+COMMENT_START: "/*" ->mode-push(COMMENT), skip
+
+%in-modes COMMENT
+COMMENT_END: "*/" ->mode-pop, skip
+COMMENT_CONTENT: . | "\n" ->skip
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]],
+[[foo
+bar
+/* comment */
+baz
+/* unclosed comment
+]])
+
+AT_BISON_CHECK([[-o parse.c parse.y]], 0)
+
+AT_COMPILE([[parse]])
+
+AT_PARSER_CHECK([[parse < in]], 0,
+[[foo
+bar
+baz
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+## --------------------------- ##
+## Unclosed comments forbidden ##
+## --------------------------- ##
+
+AT_SETUP([Unclosed comments forbidden])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+
+]AT_YYERROR_DECLARE[
+}
+
+%%
+tokens:
+  %empty
+| tokens ID { printf ("%s\n", $2); @2; }
+;
+
+%%tokens
+WS: [ \n]+ ->skip
+ID: [a-z][a-z0-9]*
+
+%in-modes INITIAL COMMENT
+COMMENT_START: "/*" ->mode-push(COMMENT), skip, expect-mode-pop
+
+%in-modes COMMENT
+COMMENT_END: "*/" ->mode-pop, skip
+COMMENT_CONTENT: . | "\n" ->skip
+
+%%
+void
+yyerror (const char *msg)
+{
+  fprintf (stderr, "%d:%d-%d:%d %s\n",
+           yylloc.first_line, yylloc.first_column,
+           yylloc.last_line, yylloc.last_column,
+           msg);
+}
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]],
+[[foo
+bar
+/* comment */
+baz
+/* unclosed comment
+]])
+
+AT_BISON_CHECK([[-o parse.c parse.y]], 0)
+
+AT_COMPILE([[parse]])
+
+AT_PARSER_CHECK([[parse < in]], 1,
+[[foo
+bar
+baz
+]],
+[[5:1-5:2 COMMENT_START is never terminated
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+## -------------------------- ##
+## Multiple unclosed comments ##
+## -------------------------- ##
+
+AT_SETUP([Multiple unclosed comments])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+
+]AT_YYERROR_DECLARE[
+}
+
+%%
+tokens:
+  %empty
+| tokens ID { printf ("%s\n", $2); @2; }
+;
+
+%%tokens
+WS: [ \n]+ ->skip
+ID: [a-z][a-z0-9]*
+
+%in-modes INITIAL COMMENT
+COMMENT_START: "/*" ->mode-push(COMMENT), skip, expect-mode-pop
+
+%in-modes COMMENT
+COMMENT_END: "*/" ->mode-pop, skip
+COMMENT_CONTENT: . | "\n" ->skip
+
+%%
+void
+yyerror (const char *msg)
+{
+  fprintf (stderr, "%d:%d-%d:%d %s\n",
+           yylloc.first_line, yylloc.first_column,
+           yylloc.last_line, yylloc.last_column,
+           msg);
+}
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]],
+[[foo
+bar
+/* comment */
+baz
+/* an unclosed comment
+  /* a nested unclosed comment
+]])
+
+AT_BISON_CHECK([[-o parse.c parse.y]], 0)
+
+AT_COMPILE([[parse]])
+
+AT_PARSER_CHECK([[parse < in]], 1,
+[[foo
+bar
+baz
+]],
+[[5:1-5:2 COMMENT_START is never terminated
+6:3-6:4 COMMENT_START is never terminated
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+## --------------------------------- ##
+## expect-mode-pop without mode-push ##
+## --------------------------------- ##
+
+AT_SETUP([expect-mode-pop without mode-push])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+
+]AT_YYERROR_DECLARE[
+}
+
+%%
+tokens:
+  %empty
+| tokens ID { printf ("%s\n", $2); }
+;
+
+%%tokens
+WS: [ \n]+ ->skip
+ID: [a-z][a-z0-9]*
+
+COMMENT_START: "/*" ->mode-change(COMMENT), expect-mode-pop
+
+%in-modes COMMENT
+COMMENT_END: "*/" ->mode-change(INITIAL), skip
+COMMENT_CONTENT: . | "\n" ->skip
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_BISON_CHECK([[-o parse.c parse.y]], 1, [],
+[[parse.y:35.45-59: error: expect-mode-pop can only be used along with mode-push
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+## ---------------------##
+## api.input.kind stdio ##
+## ---------------------##
+
+AT_SETUP([api.input.kind stdio])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[calc.y]],
+[[
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%define api.input.kind stdio
+%define api.value.type union
+%type <int> expr num
+
+%%
+program: expr NL { printf ("%d", $1); }
+
+expr: expr PLUS num  { $$ = $1 + $3; }
+    | expr MINUS num { $$ = $1 - $3; }
+    | num { $$ = $1; }
+
+num: NUM { $$ = atoi($1); }
+
+%%tokens
+NUM: [0-9]+
+PLUS: "+"
+MINUS: "-"
+NL: "\n"
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]], [[3+10-1
+]])
+
+AT_BISON_CHECK([[-o calc.c calc.y]], 0)
+
+AT_COMPILE([[calc]])
+
+AT_PARSER_CHECK([[calc < in]], 0, [[12]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## ----------------------##
+## api.input.kind string ##
+## ----------------------##
+
+AT_SETUP([api.input.kind string])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[calc.y]],
+[[
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%define api.input.kind string
+%define api.value.type union
+%type <int> expr num
+
+%%
+program: expr { printf ("%d", $1); }
+
+expr: expr PLUS num  { $$ = $1 + $3; }
+    | expr MINUS num { $$ = $1 - $3; }
+    | num { $$ = $1; }
+
+num: NUM { $$ = atoi($1); }
+
+%%tokens
+NUM: [0-9]+
+PLUS: "+"
+MINUS: "-"
+
+%%
+int
+main (int argc, char** argv)
+{
+  yyin = argv[1];
+  return yyparse ();
+}
+]AT_YYERROR_DEFINE[
+]])
+
+AT_BISON_CHECK([[-o calc.c calc.y]], 0)
+
+AT_COMPILE([[calc]])
+
+AT_PARSER_CHECK([[calc "3+10-1"]], 0, [[12]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## ------------------------##
+## api.input.kind provided ##
+## ------------------------##
+
+AT_SETUP([api.input.kind provided])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[calc.y]],
+[[
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%define api.input.kind provided
+%define api.value.type union
+%type <int> expr num
+
+%%
+program: expr { printf ("%d", $1); }
+
+expr: expr PLUS num  { $$ = $1 + $3; }
+    | expr MINUS num { $$ = $1 - $3; }
+    | num { $$ = $1; }
+
+num: NUM { $$ = atoi($1); }
+
+%%tokens
+NUM: [0-9]+
+PLUS: "+"
+MINUS: "-"
+
+%%
+static char* input;
+static int input_pos;
+
+int
+yygetc ()
+{
+  if (!input [input_pos])
+    {
+      return YYEEOF;
+    }
+
+  return 0xFF & input[input_pos++];
+}
+
+int
+main (int argc, char** argv)
+{
+  input = "3+10-1";
+  return yyparse ();
+}
+]AT_YYERROR_DEFINE[
+]])
+
+AT_BISON_CHECK([[-o calc.c calc.y]], 0)
+
+AT_COMPILE([[calc]])
+
+AT_PARSER_CHECK([[calc "3+10-1"]], 0, [[12]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## ---------------------##
+## api.input.kind bogus ##
+## ---------------------##
+
+AT_SETUP([api.input.kind bogus])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[calc.y]],
+[[
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%define api.input.kind bogus
+%define api.value.type union
+%type <int> expr num
+
+%%
+program: expr { printf ("%d", $1); }
+
+expr: expr PLUS num  { $$ = $1 + $3; }
+    | expr MINUS num { $$ = $1 - $3; }
+    | num { $$ = $1; }
+
+num: NUM { $$ = atoi($1); }
+
+%%tokens
+NUM: [0-9]+
+PLUS: "+"
+MINUS: "-"
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_BISON_CHECK([[-o calc.c calc.y]], 1, [],
+[calc.y:25.1-28: error: invalid value for %define variable 'api.input.kind': 'bogus'
+calc.y:25.1-28: note: accepted value: 'stdio'
+calc.y:25.1-28: note: accepted value: 'string'
+calc.y:25.1-28: note: accepted value: 'provided'
+])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## --------------------- ##
+## Newline suppression   ##
+## --------------------- ##
+
+AT_SETUP([Newline suppression])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%%
+program: %empty
+
+%%tokens
+WS: [ \n]+ -> skip
+
+TOK1: "tok1" -> skip
+
+TOK2: "tok2"
+  -> skip
+
+TOK3: "tok3"
+
+
+  -> skip
+
+TOK4: "tok4"
+  // line comment
+  -> skip
+
+TOK5: "tok5"
+  /* block comment
+  */ -> skip
+
+TOK6: "tok6"
+  /* block comment
+  */ -> skip
+
+TOK7: "tok7"
+  -> skip
+
+%%
+]AT_YYERROR_DEFINE[
+]AT_MAIN_DEFINE[
+]])
+
+AT_DATA([[in]],
+[[tok1
+tok2
+tok3
+tok4
+tok5
+tok6
+tok7
+]])
+
+AT_BISON_CHECK([[-o parse.c parse.y]], 0)
+
+AT_COMPILE([[parse]])
+
+AT_PARSER_CHECK([[parse < in]], 0, [[]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+
+
+## ------------- ##
+## Empty tokens  ##
+## ------------- ##
+
+AT_SETUP([Empty tokens])
+AT_KEYWORDS([lexing])
+AT_BISON_OPTION_PUSHDEFS([%%tokens])
+
+AT_DATA_GRAMMAR([[parse.y]],
+[[
+%code {
+#include <stdio.h>
+#include <stdlib.h>
+]AT_YYERROR_DECLARE[
+}
+
+%%
+program: %empty
+
+%%tokens
+EMPTY1: "" -> skip
+EMPTY2: "e"? -> skip
+EMPTY3: "e"? "f"? -> skip
+EMPTY4: "e"? | "f"? -> skip
+EMPTY5: ("e"?) -> skip
+
+%%
+]AT_YYERROR_DEFINE[
+]])
+
+AT_BISON_CHECK([[-o parse.c parse.y]], 1, [],
+[[parse.y:29.9-10: error: empty string literal pattern
+parse.y:30.9-12: error: pattern can be empty
+parse.y:31.9-17: error: pattern can be empty
+parse.y:32.9-19: error: pattern can be empty
+parse.y:33.9-14: error: pattern can be empty
+]])
+
+AT_BISON_OPTION_POPDEFS
+AT_CLEANUP
+

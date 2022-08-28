@@ -1,0 +1,5 @@
+/lexcalc
+/parse.c
+/parse.h
+/parse.output
+/scan.c

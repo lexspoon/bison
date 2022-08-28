@@ -65,6 +65,11 @@ perform the first checkout of the submodules, run
 
     $ git submodule update --init
 
+Override the local version number. Otherwise, the build will complain
+that the version number is UNKNOWN and does not match gnits standards.
+
+    echo 3.9.0 > .tarball-version
+
 The next step is to get other files needed to build, which are extracted
 from other source packages:
 
@@ -247,6 +252,24 @@ the function.
 
 In writing arithmetic comparisons, use "<" and "<=" rather than ">" and ">="
 <https://public-inbox.org/git/7vfyw7yebj.fsf_-_@assigned-by-dhcp.cox.net/>.
+
+
+You can use the `clang-format` command to reformat files
+automatically.
+It won't fix all style problems, but it can do things
+like change tabs to spaces or insert spaces before the
+parentheses in a function call.
+There is a suitable `.clang-format` file in this repository,
+so you can usually format an individual file as simply as
+follows:
+
+    clang-format -i YOURFILE.c
+
+Please do not reformat pre-existing files unless you are making
+major changes to them. If you do reformat a whole existing file,
+then submit the reformatting change as its own commit, so that
+it is easier to separate the real changes from the formatting
+changes in the Git history.
 
 ### Bison
 Follow the GNU Coding Standards.

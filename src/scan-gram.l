@@ -43,7 +43,7 @@
 #undef gram_wrap
 #define gram_wrap() 1
 
-#define YY_DECL GRAM_LEX_DECL
+#define YY_DECL int gram_lex0 (GRAM_STYPE *val, location *loc)
 
 /* Location of scanner cursor.  */
 static boundary scanner_cursor;
@@ -117,9 +117,13 @@ gram_scanner_last_string_free (void)
   STRING_FREE ();
 }
 
+/* The nesting level of parentheses */
+static int paren_depth;
+
 static void handle_syncline (char *, location);
 static int scan_integer (char const *p, int base, location loc);
 static int convert_ucn_to_byte (char const *hex_text);
+static int convert_ucn_to_int (char const *hex_text);
 static void unexpected_eof (boundary, char const *);
 static void unexpected_newline (boundary, char const *);
 
@@ -128,6 +132,8 @@ static void unexpected_newline (boundary, char const *);
 %x SC_YACC_COMMENT
  /* Characters and strings in directives/rules. */
 %x SC_ESCAPED_CHARACTER SC_ESCAPED_STRING SC_ESCAPED_TSTRING
+ /* Strings inside the lexer section */
+%x SC_ESCAPED_STRING_LEX
  /* A identifier was just read in directives/rules.  Special state
     to capture the sequence 'identifier :'. */
 %x SC_AFTER_IDENTIFIER
@@ -151,6 +157,10 @@ static void unexpected_newline (boundary, char const *);
 %x SC_STRING SC_CHARACTER
  /* Bracketed identifiers support. */
 %x SC_BRACKETED_ID SC_RETURN_BRACKETED_ID
+ /* Lexer rules */
+%x LEXER
+ /* The elements of a character class */
+%x CHARACTER_CLASS_ELEMENTS
 
 letter    [.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_]
 id        {letter}({letter}|[-0-9])*
@@ -206,14 +216,17 @@ eqopt    ({sp}=)?
   /*-----------------------.
   | Scanning white space.  |
   `-----------------------*/
-
 <INITIAL,SC_AFTER_IDENTIFIER,SC_BRACKETED_ID,SC_RETURN_BRACKETED_ID>
 {
-  /* Comments and white space.  */
   "," {
      complain (loc, Wother, _("stray ',' treated as white space"));
   }
-  [ \f\t\v\r]|{eol}  |
+}
+
+<INITIAL,LEXER,SC_AFTER_IDENTIFIER,SC_BRACKETED_ID,SC_RETURN_BRACKETED_ID>
+{
+  /* Comments and white space.  */
+  [ \f\t\v\r]  |
   "//".*       continue;
   "/*" {
     token_start = loc->start;
@@ -226,10 +239,16 @@ eqopt    ({sp}=)?
   }
 }
 
+<INITIAL,SC_AFTER_IDENTIFIER,SC_BRACKETED_ID,SC_RETURN_BRACKETED_ID>
+{
+  {eol} continue;
+}
 
-  /*----------------------------.
-  | Scanning Bison directives.  |
-  `----------------------------*/
+
+  /*-------------------------------------.
+  | Top-level tokens for all of the file |
+  | except the epilogue.                 |
+  `-------------------------------------*/
 
   /* For directives that are also command line options, the regex must be
         "%..."
@@ -237,7 +256,7 @@ eqopt    ({sp}=)?
      option name, with a single string argument.  Otherwise, add exceptions
      to ../build-aux/cross-options.pl.  */
 
-<INITIAL>
+<INITIAL,LEXER>
 {
   "%binary"                         return BISON_DIRECTIVE (NONASSOC);
   "%code"                           return BISON_DIRECTIVE (CODE);
@@ -253,6 +272,7 @@ eqopt    ({sp}=)?
   "%file-prefix"                    RETURN_VALUE (PERCENT_FILE_PREFIX, uniqstr_new (yytext));
   "%glr-parser"                     return BISON_DIRECTIVE (GLR_PARSER);
   "%header"                         return BISON_DIRECTIVE (HEADER);
+  "%in-modes"                       return BISON_DIRECTIVE (IN_MODES);
   "%initial-action"                 return BISON_DIRECTIVE (INITIAL_ACTION);
   "%language"                       return BISON_DIRECTIVE (LANGUAGE);
   "%left"                           return PERCENT_LEFT;
@@ -310,17 +330,27 @@ eqopt    ({sp}=)?
     return GRAM_error;
   }
 
+  "^"                     return CARET;
   ":"                     return COLON;
+  "$"                     return DOLLAR;
+  "."                     return DOT;
   "="                     return EQUAL;
-  "|"                     return PIPE;
-  ";"                     return SEMICOLON;
-
-  {id} {
-    val->ID = uniqstr_new (yytext);
-    id_loc = *loc;
-    bracketed_id_str = NULL;
-    BEGIN SC_AFTER_IDENTIFIER;
+  "(" {
+    paren_depth++;
+    return LPAREN;
   }
+  "|"                     return PIPE;
+  "+"                     return PLUS;
+  "?"                     return QUESTION;
+  "->"                    return RIGHT_ARROW;
+  ")" {
+    if (paren_depth > 0) {
+      paren_depth--;
+    }
+    return RPAREN;
+  }
+  ";"                     return SEMICOLON;
+  "*"                     return STAR;
 
   {int}      RETURN_VALUE (INT_LITERAL, scan_integer (yytext, 10, *loc));
   {xint}     RETURN_VALUE (INT_LITERAL, scan_integer (yytext, 16, *loc));
@@ -334,10 +364,6 @@ eqopt    ({sp}=)?
 
   /* Characters.  */
   "'"         token_start = loc->start; BEGIN SC_ESCAPED_CHARACTER;
-
-  /* Strings. */
-  "\""        token_start = loc->start; STRING_1GROW ('"'); BEGIN SC_ESCAPED_STRING;
-  "_(\""      token_start = loc->start; STRING_1GROW ('"'); BEGIN SC_ESCAPED_TSTRING;
 
   /* Prologue. */
   "%{"        code_start = loc->start; BEGIN SC_PROLOGUE;
@@ -366,25 +392,21 @@ eqopt    ({sp}=)?
     BEGIN SC_TAG;
   }
 
+  "%%tokens" {
+    BEGIN LEXER;
+    return BISON_DIRECTIVE(PERCENT_TOKENS);
+  }
+  
   "%%" {
+    // This count is just for %% by itself, not for %%tokens
     static int percent_percent_count;
-    if (++percent_percent_count == 2)
+    if (++percent_percent_count == 2) {
       BEGIN SC_EPILOGUE;
+    } else {
+      BEGIN INITIAL;
+    }
+    
     return PERCENT_PERCENT;
-  }
-
-  "[" {
-    bracketed_id_str = NULL;
-    bracketed_id_start = loc->start;
-    bracketed_id_context_state = YY_START;
-    BEGIN SC_BRACKETED_ID;
-  }
-
-  [^\[%A-Za-z0-9_<>{}""''*;|=/, \f\r\n\t\v]+|. {
-    complain (loc, complaint, "%s: %s",
-              ngettext ("invalid character", "invalid characters", yyleng),
-              quote_mem (yytext, yyleng));
-    return GRAM_error;
   }
 
   <<EOF>> {
@@ -394,12 +416,100 @@ eqopt    ({sp}=)?
 }
 
 
+  /*-----------------.
+  | Start of strings |
+  `-----------------*/
+<INITIAL>
+{
+  "\""        context_state = YY_START; token_start = loc->start; STRING_1GROW ('"'); BEGIN SC_ESCAPED_STRING;
+  "_(\""      context_state = YY_START; token_start = loc->start; STRING_1GROW ('"'); BEGIN SC_ESCAPED_TSTRING;
+}
+
+<LEXER>
+{
+  "\""        context_state = LEXER; token_start = loc->start; STRING_1GROW ('"'); BEGIN SC_ESCAPED_STRING_LEX;
+}
+
+ /*-----------------------------------------------------.
+  | Special handling of tokens that are different        |
+  | in the lexer section.                                |
+  `-----------------------------------------------------*/
+
+<INITIAL> 
+{
+  {id} {
+    val->ID = uniqstr_new (yytext);
+    id_loc = *loc;
+    bracketed_id_str = NULL;
+    BEGIN SC_AFTER_IDENTIFIER;
+  }
+
+  "[" {
+    bracketed_id_str = NULL;
+    bracketed_id_start = loc->start;
+    bracketed_id_context_state = YY_START;
+    BEGIN SC_BRACKETED_ID;
+  }
+}
+
+
+<LEXER>
+{
+  {eol} {
+    if (paren_depth > 0) {
+      // Skip newlines that are inside parentheses
+      continue;
+    }
+
+    // Outside of parentheses, treat it as a TLD separator.
+    // These can only occur in specific places in the grammar.
+    return NL;
+  }
+
+  {id} {
+    val->ID = uniqstr_new (yytext);
+    id_loc = *loc;
+    return ID;
+  }
+
+  /*---------------------------------------------------------------
+   | When matching [ as the beginning of a character range,       |
+   | also go ahead and match any leading ^. It greatly simplifies |
+   | the grammar if it doesn't have to support the special case   |
+   | that ^ means something different iff it's the very first     |
+   | character.                                                   |
+   `-------------------------------------------------------------*/
+  "["^? {
+    token_start = loc->start;
+    bool is_negated = yytext[1] == '^';
+    BEGIN CHARACTER_CLASS_ELEMENTS;
+    RETURN_VALUE (CHARACTER_CLASS_START, is_negated);
+  }
+
+  ","     return COMMA;
+}
+
+  /*---------------------------------.
+  | Error handling at the top level  |
+  `---------------------------------*/
+
+<INITIAL,LEXER>
+{
+  [^\[%A-Za-z0-9_<>{}""''+*?();|=/, \f\r\n\t\v]+|. {
+    complain (loc, complaint, "%s: %s",
+              ngettext ("invalid character", "invalid characters", yyleng),
+              quote_mem (yytext, yyleng));
+    return GRAM_error;
+  }
+}
+
+
   /*--------------------------------------------------------------.
   | Supporting \0 complexifies our implementation for no expected |
   | added value.                                                  |
   `--------------------------------------------------------------*/
 
-<SC_ESCAPED_CHARACTER,SC_ESCAPED_STRING,SC_ESCAPED_TSTRING,SC_TAG>
+<SC_ESCAPED_CHARACTER,SC_ESCAPED_STRING,SC_ESCAPED_STRING_LEX,SC_ESCAPED_TSTRING,SC_TAG>
 {
   \0         {
     complain (loc, complaint, _("invalid null character"));
@@ -561,12 +671,26 @@ eqopt    ({sp}=)?
   "\"" {
     STRING_1GROW ('"');
     STRING_FINISH ();
-    BEGIN INITIAL;
+    BEGIN context_state;
     loc->start = token_start;
     complain (loc, Wyacc,
               _("POSIX Yacc does not support string literals"));
     RETURN_VALUE (STRING, last_string);
   }
+}
+<SC_ESCAPED_STRING_LEX>
+{
+  "\"" {
+    STRING_1GROW ('"');
+    STRING_FINISH ();
+    BEGIN context_state;
+    loc->start = token_start;
+    RETURN_VALUE (STRING, last_string);
+  }
+}
+
+<SC_ESCAPED_STRING,SC_ESCAPED_STRING_LEX>
+{
   <<EOF>>   unexpected_eof (token_start, "\"");
   "\n"      unexpected_newline (token_start, "\"");
 }
@@ -576,7 +700,7 @@ eqopt    ({sp}=)?
   "\")" {
     STRING_1GROW ('"');
     STRING_FINISH ();
-    BEGIN INITIAL;
+    BEGIN context_state;
     loc->start = token_start;
     complain (loc, Wyacc,
               _("POSIX Yacc does not support string literals"));
@@ -665,6 +789,35 @@ eqopt    ({sp}=)?
     STRING_GROW_ESCAPE (strtol (yytext + 2, NULL, 16));
   }
 
+  \\(u|U[0-9abcdefABCDEF]{4})[0-9abcdefABCDEF]{4} {
+    STRING_GROW_ESCAPE (convert_ucn_to_byte (yytext));
+  }
+
+  /* \\[\"\'?\\] would be shorter, but it confuses xgettext.  */
+  \\("\""|"'"|"?"|"\\")  STRING_GROW_ESCAPE (yytext[1]);
+}
+
+  /* Some escapes are not supported in a lexer section, because
+     it's ambiguous how to interpret them for UTF-8. */
+<SC_ESCAPED_STRING_LEX>
+{
+  \\(u|U[0-9abcdefABCDEF]{4})[0-9abcdefABCDEF]{4} {
+    if (convert_ucn_to_int (yytext) < 0)
+      {
+        complain (loc, complaint, _("invalid character"));
+        STRING_1GROW ('?');
+      }
+    else
+      {
+        STRING_GROW ();
+      }
+  }
+
+  \\("\""|"'"|"\\") { STRING_GROW (); }
+}
+
+<SC_ESCAPED_CHARACTER,SC_ESCAPED_STRING,SC_ESCAPED_STRING_LEX,SC_ESCAPED_TSTRING>
+{
   \\a   STRING_GROW_ESCAPE ('\a');
   \\b   STRING_GROW_ESCAPE ('\b');
   \\f   STRING_GROW_ESCAPE ('\f');
@@ -672,14 +825,10 @@ eqopt    ({sp}=)?
   \\r   STRING_GROW_ESCAPE ('\r');
   \\t   STRING_GROW_ESCAPE ('\t');
   \\v   STRING_GROW_ESCAPE ('\v');
+}
 
-  /* \\[\"\'?\\] would be shorter, but it confuses xgettext.  */
-  \\("\""|"'"|"?"|"\\")  STRING_GROW_ESCAPE (yytext[1]);
-
-  \\(u|U[0-9abcdefABCDEF]{4})[0-9abcdefABCDEF]{4} {
-    STRING_GROW_ESCAPE (convert_ucn_to_byte (yytext));
-  }
-
+<SC_ESCAPED_CHARACTER,SC_ESCAPED_STRING,SC_ESCAPED_STRING_LEX,SC_ESCAPED_TSTRING>
+{
   \\(.|{eol})      {
     char const *p = yytext + 1;
     /* Quote only if escaping won't make the character visible.  */
@@ -845,7 +994,7 @@ eqopt    ({sp}=)?
   | By default, grow the string obstack with the input.  |
   `-----------------------------------------------------*/
 
-<SC_COMMENT,SC_LINE_COMMENT,SC_BRACED_CODE,SC_PREDICATE,SC_PROLOGUE,SC_EPILOGUE,SC_STRING,SC_CHARACTER,SC_ESCAPED_CHARACTER,SC_ESCAPED_STRING,SC_ESCAPED_TSTRING>
+<SC_COMMENT,SC_LINE_COMMENT,SC_BRACED_CODE,SC_PREDICATE,SC_PROLOGUE,SC_EPILOGUE,SC_STRING,SC_CHARACTER,SC_ESCAPED_CHARACTER,SC_ESCAPED_STRING,SC_ESCAPED_STRING_LEX,SC_ESCAPED_TSTRING>
 {
   /* Accept multibyte characters in one block instead of byte after
      byte, so that add_column_width and mbsnwidth can compute correct
@@ -854,6 +1003,109 @@ eqopt    ({sp}=)?
      Add a fallthrough "|." so that non UTF-8 input is still accepted
      and does not jam the scanner.  */
   {mbchar}|.   STRING_GROW ();
+}
+
+  /*----------------------------------------------------.
+  | Contents of a character class                       |
+  `-----------------------------------------------------*/
+<CHARACTER_CLASS_ELEMENTS>
+{
+  "]" {
+    BEGIN LEXER;
+    RETURN_VALUE (CHARACTER_CLASS_END, false);
+  }
+
+  /*-------------------------------------------------------------.
+  | When matching a closing ], also match any final "-"          |
+  | character that is included. Doing so simplifies the grammar  |
+  | by preventing it from having to treat "-" differently        |
+  | at the very end of a character range.                        |
+  `-------------------------------------------------------------*/
+  "-]" {
+    BEGIN LEXER;
+    RETURN_VALUE (CHARACTER_CLASS_END, true);
+  }
+
+  "-" {
+    return MINUS;
+  }
+
+  "[" {
+    complain(loc, complaint, _("[ is reserved for future use inside a character class"));
+    RETURN_VALUE (CHARACTER_CLASS_MEMBER, '?');
+  }
+
+  [^\\\n] {
+    RETURN_VALUE (CHARACTER_CLASS_MEMBER, yytext[0]);
+  }
+
+  \\a {
+    RETURN_VALUE (CHARACTER_CLASS_MEMBER, '\a');
+  }
+  
+  \\b {
+    RETURN_VALUE (CHARACTER_CLASS_MEMBER, '\b');
+  }
+  
+  \\f {
+    RETURN_VALUE (CHARACTER_CLASS_MEMBER, '\f');
+  }
+  
+  \\n {
+    RETURN_VALUE (CHARACTER_CLASS_MEMBER, '\n');
+  }
+  
+  \\r {
+    RETURN_VALUE (CHARACTER_CLASS_MEMBER, '\r');
+  }
+  
+  \\t {
+    RETURN_VALUE (CHARACTER_CLASS_MEMBER, '\t');
+  }
+  
+  \\v {
+    RETURN_VALUE (CHARACTER_CLASS_MEMBER, '\v');
+  }
+  
+  \\("\""|"\\"|"\["|"\]"|"-") {
+    RETURN_VALUE (CHARACTER_CLASS_MEMBER, yytext[1]);
+  }
+
+  \\(u|U[0-9abcdefABCDEF]{4})[0-9abcdefABCDEF]{4} {
+    long code = convert_ucn_to_int (yytext);
+    if (code < 0)
+      {
+        complain (loc, complaint, _("invalid character"));
+        RETURN_VALUE (CHARACTER_CLASS_MEMBER, (ucs4_t) '?');
+      }
+    RETURN_VALUE (CHARACTER_CLASS_MEMBER, (ucs4_t) code);
+  }
+
+  \\u {
+    complain(loc, complaint, _("\\u must be followed by four hex digits"));
+    RETURN_VALUE (CHARACTER_CLASS_MEMBER, '/');
+  }
+
+  \\U {
+    complain(loc, complaint, _("\\U must be followed by eight hex digits"));
+    RETURN_VALUE (CHARACTER_CLASS_MEMBER, '/');
+  }
+
+  \\ {
+    complain(loc, complaint, _("unrecognized escape inside character class"));
+    RETURN_VALUE (CHARACTER_CLASS_MEMBER, '/');
+  }
+  
+  {eol} {
+    complain(loc, complaint, _("unexpected end of line inside character class"));
+    BEGIN LEXER;
+    RETURN_VALUE (CHARACTER_CLASS_END, false);
+  }
+
+  <<EOF>> {
+    unexpected_eof (token_start, "]");
+    BEGIN LEXER;
+  }
 }
 
 %%
@@ -941,6 +1193,23 @@ convert_ucn_to_byte (char const *ucn)
   return code;
 }
 
+/*------------------------------------------------------------.
+| Convert a Unicode character to an integer. Return -1 if the |
+| code is out of range.                                       |
+`------------------------------------------------------------*/
+
+static int
+convert_ucn_to_int (char const *ucn)
+{
+  long code = strtol (ucn + 2, NULL, 16);
+
+  if (! (0 < code && code <= LEX_CHAR_MAX))
+    {
+      return -1;
+    }
+
+  return code;
+}
 
 /*----------------------------------------------------------------------------.
 | Handle '#line INT_LITERAL( "FILE")?\n'.  ARGS has already skipped '#line '. |
@@ -1047,3 +1316,69 @@ gram_scanner_free (void)
 {
   obstack_free (&obstack_for_string, 0);
 }
+
+/*------------------------------------------.
+| Suppress newline tokens that are followed |
+| by something that cannot be the beginning |
+| of a statement.                           |
+`------------------------------------------*/
+
+// Whether this token is allowed to continue a
+// statement from a previous line.
+bool
+can_continue_previous_line(int token)
+{
+  if (token == RIGHT_ARROW)
+    {
+      return true;
+    }
+
+  return false;
+}
+
+
+static bool saved_token_p = false;
+static int saved_token;
+
+// A wrapper around the generated lexer that
+// condenses and removes newline tokens
+int gram_lex (GRAM_STYPE *val, location *loc)
+{
+  if (saved_token_p)
+    {
+      // Return a saved token if there is one
+      saved_token_p = 0;
+      return saved_token;
+    }
+
+  int token = gram_lex0(val, loc);
+
+  if (token != NL) 
+    {
+      // For anything but newline, just return it
+      return token;
+    }
+
+  // If the token is a newline, then check ahead one
+  // token.
+  int following_token = gram_lex0(val, loc);
+  while (following_token == NL) 
+    {
+      // Keep going while seeing more NL characters
+      following_token = gram_lex0(val, loc);
+    }
+  
+
+  if (can_continue_previous_line(following_token)) {
+    // Skip the NEWLINE and return the next token
+    return following_token;
+  }
+
+  // The NEWLINE is significant and should be returned. Save
+  // the next token for the next call to gram_lex().
+  saved_token_p = 1;
+  saved_token = following_token;
+  
+  return token;
+}
+

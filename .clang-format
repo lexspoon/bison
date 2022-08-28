@@ -1,0 +1,13 @@
+BasedOnStyle: GNU
+IndentPPDirectives: BeforeHash
+UseTab: Never
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex:          '^<config.h>'
+    Priority:       -1
+  - Regex:          '"system.h"'
+    Priority:       1
+  - Regex:          '<.*>'
+    Priority:       2
+  - Regex:          '.*'
+    Priority:       3

@@ -76,7 +76,11 @@ set x `LC_ALL=C ls -l '$1'` &&
   [], [ignore], [ignore])
 ])
 
-
+# AT_DATA_WITH_ESCAPES(FILE, CONTENT)
+# -----------------------------------
+# Same as AT_DATA, but process escape codes that are in the file:
+#   ^M  carriage return
+#   ^^  caret
 
 ## ------------- ##
 ## Basic tests.  ##
@@ -262,10 +266,12 @@ m4_pushdef([AT_YACC_C_IF],
 
 m4_pushdef([AT_LAC_IF],
 [m4_bmatch([$3], [%define parse.lac full], [$1], [$2])])
+m4_pushdef([AT_LEX_IF],
+[m4_bmatch([$3], [%%tokens], [$1], [$2])])
 m4_pushdef([AT_LEXPARAM_IF],
 [m4_bmatch([$3], [%lex-param], [$1], [$2])])
 m4_pushdef([AT_LOCATION_IF],
-[m4_bmatch([$3], [%locations], [$1], [$2])])
+[m4_bmatch([$3], [%locations\|%%tokens], [$1], [$2])])
 # Whether we use the Span location type (see calc.at), whose members are
 # not named like those of the default location type (on purpose, to make
 # sure we can use a user type).
@@ -651,7 +657,9 @@ static int
 location_print (FILE *yyo, ]AT_YYLTYPE[ const * const yylocp)
 {
   int res = 0;
-  int end_col = 0 != yylocp->last_column ? yylocp->last_column - 1 : 0;
+]AT_LEX_IF(
+[  int end_col = yylocp->last_column;],
+[  int end_col = 0 != yylocp->last_column ? yylocp->last_column - 1 : 0;])[
   if (0 <= yylocp->first_line)
     {
       res += fprintf (yyo, "%d", yylocp->first_line);

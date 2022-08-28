@@ -63,6 +63,24 @@ src_bison_SOURCES =                             \
   src/ielr.h                                    \
   src/lalr.c                                    \
   src/lalr.h                                    \
+  src/lex-machine.c                             \
+  src/lex-machine.h                             \
+  src/lex-mkdet.c                               \
+  src/lex-mkdet.h                               \
+  src/lex-mkmachine.c                           \
+  src/lex-mkmachine.h                           \
+  src/lex-mode.c                                \
+  src/lex-mode.h                                \
+  src/lex-mode-check.c                          \
+  src/lex-mode-check.h                          \
+  src/lex-pattern.c                             \
+  src/lex-pattern.h                             \
+  src/lex-rmepsilons.c                          \
+  src/lex-rmepsilons.h                          \
+  src/lex-common.c                              \
+  src/lex-common.h                              \
+  src/lex-gram.c                                \
+  src/lex-gram.h                                \
   src/location.c                                \
   src/location.h                                \
   src/lr0.c                                     \

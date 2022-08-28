@@ -1,4 +1,4 @@
-# AT_BISON_OPTION_PUSHDEFS/AT_BISON_OPTION_POPDEFS
+# `AT_BISON_OPTION_PUSHDEFS`/`AT_BISON_OPTION_POPDEFS`
 
 These two macros must be given the (main) directives so that they
 define a number of other macros to:
@@ -22,6 +22,7 @@ synonyms.
 - html: html reports
 - java
 - lac
+- lexing
 - %merge
 - multistart
 - push

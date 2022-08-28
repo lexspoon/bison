@@ -42,6 +42,11 @@
 #include "gram.h"
 #include "ielr.h"
 #include "lalr.h"
+#include "lex-machine.h"
+#include "lex-mode-check.h"
+#include "lex-mkdet.h"
+#include "lex-mkmachine.h"
+#include "lex-rmepsilons.h"
 #include "lr0.h"
 #include "muscle-tab.h"
 #include "nullable.h"
@@ -120,6 +125,26 @@ main (int argc, char *argv[])
 
   if (complaint_status == status_complaint)
     goto finish;
+
+  /* Check the lexical modes */
+  timevar_push (tv_lex_mode_check);
+  lex_mode_check ();
+  timevar_pop (tv_lex_mode_check);
+
+  /* Generate the lexical state machine */
+  timevar_push (tv_lex_mkmachine);
+  lex_mkmachine ();
+  timevar_pop (tv_lex_mkmachine);
+  
+  /* Remove epsilons */
+  timevar_push (tv_lex_rmepsilons);
+  lex_rmepsilons ();
+  timevar_pop (tv_lex_rmepsilons);
+
+  /* Make the lexical state machine deterministic */
+  timevar_push (tv_lex_mkdet);
+  lex_mkdet ();
+  timevar_pop (tv_lex_mkdet);
 
   /* Find useless nonterminals and productions and reduce the grammar. */
   timevar_push (tv_reduce);
@@ -244,6 +269,10 @@ main (int argc, char *argv[])
   grammar_free ();
   counterexample_free ();
   output_file_names_free ();
+  lex_tokendefs_free ();
+  lex_rule_stanza_mode_refs_free ();
+  lex_machine_free ();
+  lex_modes_free ();
 
   /* The scanner and parser memory cannot be released right after
      parsing, as it contains things such as user actions, prologue,

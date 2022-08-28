@@ -279,6 +279,7 @@ static const argmatch_trace_doc argmatch_trace_docs[] =
   { "time",       "time consumption" },
   { "ielr",       "IELR conversion" },
   { "cex",        "counterexample generation"},
+  { "lex",        "lexer generation"},
   { "all",        "all of the above" },
   { NULL, NULL},
 };
@@ -303,6 +304,7 @@ static const argmatch_trace_arg argmatch_trace_args[] =
   { "time",      trace_time },
   { "ielr",      trace_ielr },
   { "cex",       trace_cex },
+  { "lex",       trace_lex },
   { "all",       trace_all },
   { NULL,        trace_none},
 };

@@ -22,6 +22,8 @@ Alex Rozenman added named reference support (Bison 2.5, 2011).
 Paul Eggert fixed a million portability issues, arbitrary limitations,
 and nasty bugs.
 
+Lex Spoon added lexer generation (2023).
+
 -----
 
 Copyright (C) 1998-2015, 2018-2022 Free Software Foundation, Inc.

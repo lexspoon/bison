@@ -21,7 +21,7 @@ m4_pushdef([b4_copyright_years],
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 m4_include(b4_skeletonsdir/[c.m4])
-
+m4_include(b4_skeletonsdir/[c-lex.m4])
 
 ## ---------- ##
 ## api.pure.  ##
@@ -44,6 +44,10 @@ m4_define([b4_pure_if],
          [1], [$1],
          [2], [$1])])
          [m4_fatal([invalid api.pure value: ]$1)])])
+
+b4_pure_if([
+  b4_lex_if([
+    b4_fatal([A %%tokens section is not supported for a pure parser])])])
 
 ## --------------- ##
 ## api.push-pull.  ##
@@ -69,6 +73,10 @@ b4_define_flag_if([use_push_for_pull])
 b4_use_push_for_pull_if([
   b4_push_if([m4_define([b4_use_push_for_pull_flag], [[0]])],
              [m4_define([b4_push_flag], [[1]])])])
+
+b4_push_if([
+  b4_lex_if([
+    b4_fatal([A %%tokens section is not supported for a push parser])])])
 
 ## ----------- ##
 ## parse.lac.  ##
@@ -149,6 +157,11 @@ m4_define([b4_lhs_value],
 m4_define([b4_rhs_value],
 [b4_symbol_value([yyvsp@{b4_subtract([$2], [$1])@}], [$3], [$4])])
 
+# b4_rhs_token_text(RULE_LENGTH, POS)
+# ---------------------------------------------------------
+# The semantic value of a terminal, assuming Bison is generating
+# the lexer function.
+m4_define([b4_rhs_token_text],((const char *) yylex_toktext + yytsp@{b4_subtract([$2], [$1])@}))
 
 ## ----------- ##
 ## Locations.  ##
@@ -241,7 +254,9 @@ YYSTYPE yylval YY_INITIAL_VALUE (= yyval_default);]b4_locations_if([[
 static YYLTYPE yyloc_default]b4_yyloc_default[;
 YYLTYPE yylloc = yyloc_default;]])],
 [[/* The semantic value of the lookahead symbol.  */
-YYSTYPE yylval;]b4_locations_if([[
+YYSTYPE yylval;]b4_lex_if([[
+/* Token text for the lookahead symbol */
+static int yyltoktext_pos;]])b4_locations_if([[
 /* Location data for the lookahead symbol.  */
 YYLTYPE yylloc]b4_yyloc_default[;]])[
 /* Number of syntax errors so far.  */
@@ -276,7 +291,14 @@ m4_define([b4_declare_parser_state_variables],
     /* The semantic value stack: array, bottom, top.  */
     YYSTYPE yyvsa[YYINITDEPTH];
     YYSTYPE *yyvs]m4_ifval([$1], [ = yyvsa])[;
-    YYSTYPE *yyvsp]m4_ifval([$1], [ = yyvs])[;]b4_locations_if([[
+    YYSTYPE *yyvsp]m4_ifval([$1], [ = yyvs])[;]b4_lex_if([[
+
+    // A separate stack for managing token text: array, bottom, top.
+    // This is tracked separately from the semantic value stack because
+    // not all options for YYSTYPE would support it.
+    int yytsa[YYINITDEPTH];
+    int *yyts]m4_ifval([$1], [ = yytsa])[;
+    int *yytsp]m4_ifval([$1], [ = yyts])[;]])b4_locations_if([[
 
     /* The location stack: array, bottom, top.  */
     YYLTYPE yylsa[YYINITDEPTH];
@@ -364,7 +386,7 @@ m4_define([b4_declare_yyparse],
 
 # b4_declare_yyerror_and_yylex
 # ----------------------------
-# Comply with POSIX Yacc.
+# In POSIX mode, these have a specific declaration that is required.
 # <https://austingroupbugs.net/view.php?id=1388#c5220>
 m4_define([b4_declare_yyerror_and_yylex],
 [b4_posix_if([[#if !defined ]b4_prefix[error && !defined ]b4_api_PREFIX[ERROR_IS_DECLARED
@@ -376,7 +398,6 @@ m4_define([b4_declare_yyerror_and_yylex],
 ]])dnl
 ])
 
-
 # b4_shared_declarations
 # ----------------------
 # Declarations that might either go into the header (if --header)
@@ -385,11 +406,12 @@ m4_define([b4_shared_declarations],
 [b4_cpp_guard_open([b4_spec_mapped_header_file])[
 ]b4_declare_yydebug[
 ]b4_percent_code_get([[requires]])[
-]b4_token_enums_defines[
+]b4_lex_if([], [b4_token_enums_defines])[
 ]b4_declare_yylstype[
 ]b4_declare_yyerror_and_yylex[
 ]b4_declare_yyparse[
 ]b4_percent_code_get([[provides]])[
+]b4_declare_yyin[
 ]b4_cpp_guard_close([b4_spec_mapped_header_file])[]dnl
 ])
 
@@ -456,7 +478,9 @@ m4_if(b4_api_prefix, [yy], [],
 #define yylex           ]b4_prefix[lex
 #define yyerror         ]b4_prefix[error
 #define yydebug         ]b4_prefix[debug
-#define yynerrs         ]b4_prefix[nerrs]]b4_pure_if([], [[
+#define yynerrs         ]b4_prefix[nerrs
+#define yyin            ]b4_prefix[in
+#define yyterminal      ]b4_prefix[terminal]]b4_pure_if([], [[
 #define yylval          ]b4_prefix[lval
 #define yychar          ]b4_prefix[char]b4_locations_if([[
 #define yylloc          ]b4_prefix[lloc]])]))[
@@ -470,8 +494,10 @@ m4_if(b4_api_prefix, [yy], [],
                                 [/* Use api.header.include to #include this header
    instead of duplicating it here.  */
 ])b4_shared_declarations])[
+]b4_lex_if([b4_token_enums_defines])[
+]b4_lex_decls[
 ]b4_declare_symbol_enum[
-
+]b4_declare_lexer_state[
 ]b4_user_post_prologue[
 ]b4_percent_code_get[
 ]b4_c99_int_type_define[
@@ -577,6 +603,12 @@ void *malloc (YYSIZE_T); /* INFRINGES ON USER NAME SPACE */
 void free (void *); /* INFRINGES ON USER NAME SPACE */
 #   endif
 #  endif
+#  ifndef YYREALLOC
+#   define YYREALLOC realloc
+#   if ! defined realloc && ! defined EXIT_SUCCESS
+void *realloc (void *, YYSIZE_T); /* INFRINGES ON USER NAME SPACE */
+#   endif
+#  endif
 # endif]b4_lac_if([[
 # define YYCOPY_NEEDED 1]])[
 #endif /* ]b4_lac_if([[1]], [b4_parse_error_case([simple], [[!defined yyoverflow]], [[1]])])[ */
@@ -590,7 +622,8 @@ void free (void *); /* INFRINGES ON USER NAME SPACE */
 union yyalloc
 {
   yy_state_t yyss_alloc;
-  YYSTYPE yyvs_alloc;]b4_locations_if([
+  YYSTYPE yyvs_alloc;]b4_lex_if([
+  int yyts_alloc;])b4_locations_if([
   YYLTYPE yyls_alloc;])[
 };
 
@@ -1667,7 +1700,7 @@ yyparse (]m4_ifset([b4_parse_param], [b4_formals(b4_parse_param)], [void])[)]])]
   char *yymsg = yymsgbuf;
   YYPTRDIFF_T yymsg_alloc = sizeof yymsgbuf;]])[
 
-#define YYPOPSTACK(N)   (yyvsp -= (N), yyssp -= (N)]b4_locations_if([, yylsp -= (N)])[)
+#define YYPOPSTACK(N)   (yyvsp -= (N), yyssp -= (N)]b4_lex_if([, yytsp -= (N), yylex_free_tokens(yytsp, (N))])b4_locations_if([, yylsp -= (N)])[)
 
   /* The number of symbols on the RHS of the reduced rule.
      Keep to zero when no symbol should be popped.  */
@@ -1686,6 +1719,9 @@ yyparse (]m4_ifset([b4_parse_param], [b4_formals(b4_parse_param)], [void])[)]])]
     default:
       break;
     }]])[
+
+]b4_lex_if([  if (yylex_init ()) YYNOMEM;
+])[
 
   YYDPRINTF ((stderr, "Starting parse\n"));
 
@@ -1738,7 +1774,8 @@ yysetstate:
            these so that the &'s don't force the real ones into
            memory.  */
         yy_state_t *yyss1 = yyss;
-        YYSTYPE *yyvs1 = yyvs;]b4_locations_if([
+        YYSTYPE *yyvs1 = yyvs;]b4_lex_if([
+        YYSTYPE *yyts1 = yyts;])b4_locations_if([
         YYLTYPE *yyls1 = yyls;])[
 
         /* Each stack pointer address is followed by the size of the
@@ -1747,11 +1784,13 @@ yysetstate:
            be undefined if yyoverflow is a macro.  */
         yyoverflow (YY_("memory exhausted"),
                     &yyss1, yysize * YYSIZEOF (*yyssp),
-                    &yyvs1, yysize * YYSIZEOF (*yyvsp),]b4_locations_if([
+                    &yyvs1, yysize * YYSIZEOF (*yyvsp),]b4_lex_if([
+                    &yyts1, yysize * YYSIZEOF (*yytsp),])b4_locations_if([
                     &yyls1, yysize * YYSIZEOF (*yylsp),])[
                     &yystacksize);
         yyss = yyss1;
-        yyvs = yyvs1;]b4_locations_if([
+        yyvs = yyvs1;]b4_lex_if([
+        yyts = yyts1;])b4_locations_if([
         yyls = yyls1;])[
       }
 # else /* defined YYSTACK_RELOCATE */
@@ -1770,7 +1809,8 @@ yysetstate:
         if (! yyptr)
           YYNOMEM;
         YYSTACK_RELOCATE (yyss_alloc, yyss);
-        YYSTACK_RELOCATE (yyvs_alloc, yyvs);]b4_locations_if([
+        YYSTACK_RELOCATE (yyvs_alloc, yyvs);]b4_lex_if([
+        YYSTACK_RELOCATE (yyts_alloc, yyts);])b4_locations_if([
         YYSTACK_RELOCATE (yyls_alloc, yyls);])[
 #  undef YYSTACK_RELOCATE
         if (yyss1 != yyssa)
@@ -1779,7 +1819,8 @@ yysetstate:
 # endif
 
       yyssp = yyss + yysize - 1;
-      yyvsp = yyvs + yysize - 1;]b4_locations_if([
+      yyvsp = yyvs + yysize - 1;]b4_lex_if([
+      yytsp = yyts + yysize - 1;])b4_locations_if([
       yylsp = yyls + yysize - 1;])[
 
       YY_IGNORE_USELESS_CAST_BEGIN
@@ -1891,7 +1932,8 @@ yyread_pushed_token:]])[
   yystate = yyn;
   YY_IGNORE_MAYBE_UNINITIALIZED_BEGIN
   *++yyvsp = yylval;
-  YY_IGNORE_MAYBE_UNINITIALIZED_END]b4_locations_if([
+  YY_IGNORE_MAYBE_UNINITIALIZED_END]b4_lex_if([
+  *++yytsp = yyltoktext_pos;])b4_locations_if([
   *++yylsp = yylloc;])[
 
   /* Discard the shifted token.  */
@@ -1963,7 +2005,8 @@ yyreduce:
   YYPOPSTACK (yylen);
   yylen = 0;
 
-  *++yyvsp = yyval;]b4_locations_if([
+  *++yyvsp = yyval;]b4_lex_if([
+  *++yytsp = -1;])b4_locations_if([
   *++yylsp = yyloc;])[
 
   /* Now 'shift' the result of the reduction.  Determine what state
@@ -2122,7 +2165,8 @@ yyerrlab1:
 
   YY_IGNORE_MAYBE_UNINITIALIZED_BEGIN
   *++yyvsp = yylval;
-  YY_IGNORE_MAYBE_UNINITIALIZED_END
+  YY_IGNORE_MAYBE_UNINITIALIZED_END]b4_lex_if([
+  *++yytsp = -1;])[
 ]b4_locations_if([[
   yyerror_range[2] = yylloc;
   ++yylsp;
@@ -2181,7 +2225,8 @@ yyreturnlab:
       yydestruct ("Cleanup: popping",
                   YY_ACCESSING_SYMBOL (+*yyssp), yyvsp]b4_locations_if([, yylsp])[]b4_user_args[);
       YYPOPSTACK (1);
-    }]b4_push_if([[
+    }]b4_lex_if([
+  yylex_free ();])b4_push_if([[
   yyps->yynew = 2;
   goto yypushreturn;
 
@@ -2203,7 +2248,9 @@ yypushreturn:]], [[
     yyimpl->yynerrs = yynerrs;]])[
   return yyresult;
 }
-]b4_push_if([b4_parse_state_variable_macros([b4_macro_undef])])[
+]b4_lex_if([
+b4_yylex_impl
+])b4_push_if([b4_parse_state_variable_macros([b4_macro_undef])])[
 ]b4_percent_code_get([[epilogue]])[]dnl
 b4_epilogue[]dnl
 b4_output_end

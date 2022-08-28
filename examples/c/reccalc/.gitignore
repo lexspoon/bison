@@ -1,2 +1,6 @@
 /scan.c
 /scan.h
+/parse.c
+/parse.h
+/parse.output
+/reccalc

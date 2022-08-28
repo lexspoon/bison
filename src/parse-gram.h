@@ -1,4 +1,4 @@
-/* A Bison parser, made by GNU Bison 3.8.2.30-82269.  */
+/* A Bison parser, made by GNU Bison 3.8.2.56-500d-dirty.  */
 
 /* Bison interface for Yacc-like parsers in C
 
@@ -54,6 +54,8 @@ extern int gram_debug;
 #endif
 /* "%code requires" blocks.  */
 
+  #include "lex-mode.h"
+  #include "lex-gram.h"
   #include "symlist.h"
   #include "symtab.h"
 
@@ -115,31 +117,48 @@ extern int gram_debug;
     PERCENT_OUTPUT = 33,           /* "%output"  */
     PERCENT_PURE_PARSER = 34,      /* "%pure-parser"  */
     PERCENT_REQUIRE = 35,          /* "%require"  */
-    PERCENT_SKELETON = 36,         /* "%skeleton"  */
-    PERCENT_START = 37,            /* "%start"  */
-    PERCENT_TOKEN_TABLE = 38,      /* "%token-table"  */
-    PERCENT_VERBOSE = 39,          /* "%verbose"  */
-    PERCENT_YACC = 40,             /* "%yacc"  */
-    BRACED_CODE = 41,              /* "{...}"  */
-    BRACED_PREDICATE = 42,         /* "%?{...}"  */
-    BRACKETED_ID = 43,             /* "[identifier]"  */
-    CHAR_LITERAL = 44,             /* "character literal"  */
-    COLON = 45,                    /* ":"  */
-    EPILOGUE = 46,                 /* "epilogue"  */
-    EQUAL = 47,                    /* "="  */
-    ID = 48,                       /* "identifier"  */
-    ID_COLON = 49,                 /* "identifier:"  */
-    PERCENT_PERCENT = 50,          /* "%%"  */
-    PIPE = 51,                     /* "|"  */
-    PROLOGUE = 52,                 /* "%{...%}"  */
-    SEMICOLON = 53,                /* ";"  */
-    TAG = 54,                      /* "<tag>"  */
-    TAG_ANY = 55,                  /* "<*>"  */
-    TAG_NONE = 56,                 /* "<>"  */
-    INT_LITERAL = 57,              /* "integer literal"  */
-    PERCENT_PARAM = 58,            /* "%param"  */
-    PERCENT_UNION = 59,            /* "%union"  */
-    PERCENT_EMPTY = 60             /* "%empty"  */
+    PERCENT_IN_MODES = 36,         /* "%in-modes"  */
+    PERCENT_SKELETON = 37,         /* "%skeleton"  */
+    PERCENT_START = 38,            /* "%start"  */
+    PERCENT_TOKEN_TABLE = 39,      /* "%token-table"  */
+    PERCENT_VERBOSE = 40,          /* "%verbose"  */
+    PERCENT_YACC = 41,             /* "%yacc"  */
+    BRACED_CODE = 42,              /* "{...}"  */
+    BRACED_PREDICATE = 43,         /* "%?{...}"  */
+    BRACKETED_ID = 44,             /* "[identifier]"  */
+    CARET = 45,                    /* "^"  */
+    CHAR_LITERAL = 46,             /* "character literal"  */
+    COLON = 47,                    /* ":"  */
+    COMMA = 48,                    /* ","  */
+    DOLLAR = 49,                   /* "$"  */
+    DOT = 50,                      /* "."  */
+    EPILOGUE = 51,                 /* "epilogue"  */
+    EQUAL = 52,                    /* "="  */
+    ID_COLON = 53,                 /* "identifier:"  */
+    ID = 54,                       /* "identifier"  */
+    LPAREN = 55,                   /* "("  */
+    MINUS = 56,                    /* "-"  */
+    NL = 57,                       /* "\n"  */
+    PERCENT_PERCENT = 58,          /* "%%"  */
+    PERCENT_PERCENT_TOKENS = 59,   /* "%%tokens"  */
+    PIPE = 60,                     /* "|"  */
+    PLUS = 61,                     /* "+"  */
+    PROLOGUE = 62,                 /* "%{...%}"  */
+    QUESTION = 63,                 /* "?"  */
+    RIGHT_ARROW = 64,              /* "->"  */
+    RPAREN = 65,                   /* ")"  */
+    SEMICOLON = 66,                /* ";"  */
+    STAR = 67,                     /* "*"  */
+    TAG_ANY = 68,                  /* "<*>"  */
+    TAG_NONE = 69,                 /* "<>"  */
+    TAG = 70,                      /* "<tag>"  */
+    INT_LITERAL = 71,              /* "integer literal"  */
+    CHARACTER_CLASS_START = 72,    /* "["  */
+    CHARACTER_CLASS_END = 73,      /* "]"  */
+    CHARACTER_CLASS_MEMBER = 74,   /* "character class member"  */
+    PERCENT_PARAM = 75,            /* "%param"  */
+    PERCENT_UNION = 76,            /* "%union"  */
+    PERCENT_EMPTY = 77             /* "%empty"  */
   };
   typedef enum gram_tokentype gram_token_kind_t;
 #endif
@@ -149,17 +168,30 @@ extern int gram_debug;
 union GRAM_STYPE
 {
   assoc precedence_declarator;             /* precedence_declarator  */
+  bool CHARACTER_CLASS_START;              /* "["  */
+  bool CHARACTER_CLASS_END;                /* "]"  */
   char* STRING;                            /* "string"  */
   char* TSTRING;                           /* "translatable string"  */
   char* BRACED_CODE;                       /* "{...}"  */
   char* BRACED_PREDICATE;                  /* "%?{...}"  */
   char* EPILOGUE;                          /* "epilogue"  */
   char* PROLOGUE;                          /* "%{...%}"  */
-  char* yykind_75;                         /* string.opt  */
+  char* yykind_92;                         /* string.opt  */
   code_props_type code_props_type;         /* code_props_type  */
   int INT_LITERAL;                         /* "integer literal"  */
-  int yykind_84;                           /* int.opt  */
-  named_ref* yykind_97;                    /* named_ref.opt  */
+  int yykind_101;                          /* int.opt  */
+  lex_actions* yykind_132;                 /* lexactions.opt  */
+  lex_actions* lexactions;                 /* lexactions  */
+  lex_actions* lexaction;                  /* lexaction  */
+  lex_apattern* apattern;                  /* apattern  */
+  lex_mode_ref* mode_ref;                  /* mode_ref  */
+  lex_modeset* mode_list;                  /* mode_list  */
+  lex_pattern* pattern;                    /* pattern  */
+  lex_pattern* sequence_pattern;           /* sequence_pattern  */
+  lex_pattern* atomic_pattern;             /* atomic_pattern  */
+  lex_pattern* character_class;            /* character_class  */
+  lex_pattern* cclass_members;             /* cclass_members  */
+  named_ref* yykind_114;                   /* named_ref.opt  */
   param_type PERCENT_PARAM;                /* "%param"  */
   symbol* token_decl;                      /* token_decl  */
   symbol* alias;                           /* alias  */
@@ -172,21 +204,22 @@ union GRAM_STYPE
   symbol_list* generic_symlist_item;       /* generic_symlist_item  */
   symbol_list* nterm_decls;                /* nterm_decls  */
   symbol_list* token_decls;                /* token_decls  */
-  symbol_list* yykind_82;                  /* token_decl.1  */
+  symbol_list* yykind_99;                  /* token_decl.1  */
   symbol_list* token_decls_for_prec;       /* token_decls_for_prec  */
-  symbol_list* yykind_87;                  /* token_decl_for_prec.1  */
+  symbol_list* yykind_104;                 /* token_decl_for_prec.1  */
   symbol_list* symbol_decls;               /* symbol_decls  */
-  symbol_list* yykind_90;                  /* symbols.1  */
+  symbol_list* yykind_107;                 /* symbols.1  */
+  ucs4_t CHARACTER_CLASS_MEMBER;           /* "character class member"  */
   uniqstr PERCENT_ERROR_VERBOSE;           /* "%error-verbose"  */
   uniqstr PERCENT_FILE_PREFIX;             /* "%file-prefix"  */
   uniqstr PERCENT_FLAG;                    /* "%<flag>"  */
   uniqstr PERCENT_NAME_PREFIX;             /* "%name-prefix"  */
   uniqstr PERCENT_PURE_PARSER;             /* "%pure-parser"  */
   uniqstr BRACKETED_ID;                    /* "[identifier]"  */
-  uniqstr ID;                              /* "identifier"  */
   uniqstr ID_COLON;                        /* "identifier:"  */
+  uniqstr ID;                              /* "identifier"  */
   uniqstr TAG;                             /* "<tag>"  */
-  uniqstr yykind_76;                       /* tag.opt  */
+  uniqstr yykind_93;                       /* tag.opt  */
   uniqstr tag;                             /* tag  */
   uniqstr variable;                        /* variable  */
   unsigned char CHAR_LITERAL;              /* "character literal"  */
@@ -224,6 +257,7 @@ int gram_parse (void);
   void parser_init (void);
   /* Deallocate storage for unquote.  */
   void parser_free (void);
+
 
 
 #endif /* !YY_GRAM_SRC_PARSE_GRAM_H_INCLUDED  */

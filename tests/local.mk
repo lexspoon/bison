@@ -67,6 +67,7 @@ TESTSUITE_AT =                                \
   %D%/input.at                                \
   %D%/java.at                                 \
   %D%/javapush.at                             \
+  %D%/lex.at                                  \
   %D%/local.at                                \
   %D%/m4.at                                   \
   %D%/named-refs.at                           \

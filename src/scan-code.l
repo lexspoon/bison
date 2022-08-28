@@ -27,6 +27,7 @@
 
 #include "src/complain.h"
 #include "src/getargs.h"
+#include "src/lex-gram.h"
 #include "src/muscle-tab.h"
 #include "src/reader.h"
 #include "src/scan-code.h"
@@ -670,7 +671,13 @@ handle_action_dollar (symbol_list *rule, char *text, const location *dollar_loc)
         if (max_left_semantic_context < 1 - n)
           max_left_semantic_context = 1 - n;
         symbol_list *sym = 0 < n ? symbol_list_n_get (effective_rule, n) : NULL;
+	bool is_lex_token =
+	  lex_enabled &&
+	  sym != NULL &&
+	  sym->content.sym->content->class == token_sym;
+
         if (!type_name
+	    && !is_lex_token
             && (!sym || !sym->content.sym->content->type_name))
           {
             if (union_seen || tag_seen)
@@ -681,17 +688,30 @@ handle_action_dollar (symbol_list *rule, char *text, const location *dollar_loc)
               untyped_var_seen = true;
           }
 
+	obstack_sgrow (&obstack_for_string, "]");
+	if (is_lex_token)
+	  {
+	    obstack_sgrow(&obstack_for_string, "b4_rhs_token_text");
+	  }
+	else
+	  {
+	    obstack_sgrow(&obstack_for_string, "b4_rhs_value");
+	  }
         obstack_printf (&obstack_for_string,
-                        "]b4_rhs_value(%d, %d, ",
+                        "(%d, %d, ",
                         effective_rule_length, n);
-        if (sym)
-          obstack_printf (&obstack_for_string, "%s%d, ",
-                          sym->content.sym->content->class == nterm_sym ? "orig " : "",
-                          sym->content.sym->content->number);
-        else
-          obstack_sgrow (&obstack_for_string, "[], ");
+	if (!is_lex_token)
+	  {
+            if (sym)
+              obstack_printf (&obstack_for_string, "%s%d, ",
+                              sym->content.sym->content->class == nterm_sym ? "orig " : "",
+                              sym->content.sym->content->number);
+            else
+              obstack_sgrow (&obstack_for_string, "[], ");
 
-        obstack_quote (&obstack_for_string, type_name);
+            obstack_quote (&obstack_for_string, type_name);
+	  }
+
         obstack_sgrow (&obstack_for_string, ")[");
         if (0 < n)
           {

@@ -34,6 +34,8 @@
 #include "files.h"
 #include "getargs.h"
 #include "gram.h"
+#include "lex-common.h"
+#include "lex-machine.h"
 #include "muscle-tab.h"
 #include "output.h"
 #include "reader.h"
@@ -44,7 +46,39 @@
 #include "tables.h"
 #include "strversion.h"
 
+static struct obstack key_obstack;
 static struct obstack format_obstack;
+
+
+/*----------------------------------.
+| Helpers for computing muscle keys |
+`*---------------------------------*/
+
+// Compute an attribute name of the form base_name(i, attrib_name).
+static const char *
+attribute_key (const char *base_name,
+               int i,
+               const char *attribute_name)
+{
+  obstack_printf (&key_obstack,
+                  "%s(%d, %s)",
+                  base_name, i, attribute_name);
+
+  return obstack_finish0 (&key_obstack);
+}
+
+// Like attribute_key but with two integer parameters
+static const char *
+attribute_key2 (const char *base_name,
+                int i, int j,
+                const char *attribute_name)
+{
+  obstack_printf (&key_obstack,
+                  "%s(%d, %d, %s)",
+                  base_name, i, j, attribute_name);
+
+  return obstack_finish0 (&key_obstack);
+}
 
 
 /*-------------------------------------------------------------------.
@@ -153,6 +187,81 @@ output_quoted (FILE *out, char const *cp)
   fprintf (out, "[[");
   output_escaped (out, cp);
   fprintf (out, "]]");
+}
+
+/*-------------------------------------------------.
+| Print to OUT a quoted string that is valid for   |
+| the target language. Also escape M4 characters   |
+| such as []$                                      |
+`-------------------------------------------------*/
+
+static void
+output_quotedstr (FILE *out, const char *str)
+{
+  if (!strcmp (language->language, "c") ||
+      !strcmp (language->language, "c++") ||
+      !strcmp (language->language, "d"))
+    {
+      // For these languages, emit a UTF-8 string
+      fputc ('"', out);
+      for (const char *cp = str; *cp; cp++)
+        {
+          if (*cp == ' ' || *cp == '!' ||
+              (*cp >= '%' && *cp <= 'Z') ||
+              (*cp >= '^' && *cp <= '~'))
+            {
+              // Emit the character directly when possible
+              fputc (*cp, out);
+            }
+          else
+            {
+              // Use \x escapes for all other characters
+              fprintf (out, "\\x%2x", *cp);
+            }
+        }
+
+      fputc ('"', out);
+    }
+  else if (!strcmp (language->language, "java"))
+    {
+      // In Java, emit a UTF-16 string
+      fputc ('"', out);
+
+      for (const char *cp = str; *cp;)
+        {
+          // Decode one UTF-8 character
+          ucs4_t uc;
+          int bytes = u8_strmbtouc (&uc, (const uint8_t *)cp);
+          aver (bytes > 0);
+          cp += bytes;
+
+          if (*cp == ' ' || *cp == '!' ||
+              (*cp >= '%' && *cp <= 'Z') ||
+              (*cp >= '^' && *cp <= '~'))
+            {
+              // Emit printable characters when possible
+              fputc (*cp, out);
+            }
+          else
+            {
+              // Use \u escapes otherwise
+              uint16_t encoded[2];
+              int words = u16_uctomb (encoded, uc, 2);
+              aver (words >= 1 && words <= 2);
+              fprintf (out, "\\u%4x", encoded[0]);
+              if (words > 1)
+                {
+                  fprintf (out, "\\u%4x", encoded[1]);
+                }
+            }
+        }
+
+      fputc ('"', out);
+    }
+  else
+    {
+      abort ();
+    }
 }
 
 /*----------------------------------------------------------------.
@@ -433,6 +542,207 @@ prepare_states (void)
   MUSCLE_INSERT_INT ("states_number", nstates);
 }
 
+/*-----------------------------------------------------.
+| Definitions related to the lex grammar.              |
+`-----------------------------------------------------*/
+
+static const char *
+match_sym (int completed_match)
+{
+  if (completed_match < 0)
+    {
+      return "";
+    }
+
+  symbol *match_sym = lex_tokendefs[completed_match].sym;
+  return match_sym->tag;
+}
+
+static void
+prepare_lex_gram (void)
+{
+  if (!lex_enabled)
+    {
+      return;
+    }
+
+  muscle_insert ("lex_enabled", "1");
+
+  // b4_lex_states. A list of numbers of states.
+  for (int i = 0; i < lex_machine_nstates; i++)
+    {
+      if (!lex_machine_states[i]->is_reachable) continue;
+      if (i) obstack_sgrow (&format_obstack, ", ");
+      obstack_printf (&format_obstack, "%d", i);
+    }
+  muscle_insert ("lex_states", obstack_finish0 (&format_obstack));
+
+  // Create attributes for each state.
+  for (int i = 0; i < lex_machine_nstates; i++)
+    {
+      lex_machine_state *state = lex_machine_states[i];
+      if (!state->is_reachable) continue;
+
+      // b4_lex_state(i, transitions). The list of transitions out of
+      // state i.
+      obstack_printf (&key_obstack, "lex_state(%d, transitions)", i);
+      for (int j = 0; j < state->nedges; j++)
+        {
+          if (j) obstack_sgrow (&format_obstack, ", ");
+          obstack_printf (&format_obstack, "%d", j);
+        }
+      
+      muscle_insert (obstack_finish0 (&key_obstack),
+                     obstack_finish0 (&format_obstack));
+
+      // Create attributes for each transition.
+      for (int j = 0; j < state->nedges; j++)
+        {
+          lex_machine_edge *edge = &state->edges[j];
+          lex_machine_state *next_state = edge->next_state;
+
+          // b4_lex_transition(i, j, crange_first).
+          // b4_lex_transition(i, j, crange_last).
+          // The character range that this transition is for.
+          MUSCLE_INSERT_INT (attribute_key2 ("lex_transition", i, j, "crange_first"),
+                             edge->crange.first);
+
+          MUSCLE_INSERT_INT (attribute_key2 ("lex_transition", i, j, "crange_last"),
+                             edge->crange.last);
+
+          // b4_lex_transition(i, j, next_state). The state
+          // that this transition leads to.
+          MUSCLE_INSERT_INT (attribute_key2 ("lex_transition", i, j, "next_state"),
+                             next_state->index);
+
+          // b4_lex_transition(i, j, completed_match). The token
+          // type that is now matched, if this edge is followed.
+          muscle_insert (attribute_key2 ("lex_transition", i, j, "completed_match"),
+                         match_sym(next_state->completed_match));
+          muscle_insert (attribute_key2 ("lex_transition", i, j, "completed_match_bol"),
+                         match_sym(next_state->completed_match_bol));
+          muscle_insert (attribute_key2 ("lex_transition", i, j, "completed_match_eol"),
+                         match_sym(next_state->completed_match_eol));
+          muscle_insert (attribute_key2 ("lex_transition", i, j, "completed_match_beol"),
+                         match_sym(next_state->completed_match_beol));
+
+          // b4_lex_transition(i, j, can_have_more). Whether
+          // the next state after this transition has any
+          // outgoing transitions at all.
+          MUSCLE_INSERT_INT (attribute_key2("lex_transition", i, j, "can_have_more"),
+                             next_state->nedges > 0);
+        }
+    }
+
+  // b4_lex_tokens. A list of all the token indexes.
+  for (int i = 0; i < lex_ntokendefs; i++)
+    {
+      if (i) obstack_sgrow (&format_obstack, ", ");
+      obstack_printf (&format_obstack, "%d", i);
+    }
+  muscle_insert ("lex_tokens", obstack_finish0 (&format_obstack));
+
+  for (int i = 0; i < lex_ntokendefs; i++)
+    {
+      // b4_lex_token(i, name). The name of each token.
+      muscle_insert (attribute_key("lex_token", i, "name"),
+                     lex_tokendefs[i].sym->tag);
+    }
+
+  // Whether certain kinds of actions exist in this grammar
+  int has_bol_anchors = 0;
+  int has_eol_anchors = 0;
+  int has_mode_push = 0;
+  int has_expect_mode_pops = 0;
+  for (int i = 0; i < lex_ntokendefs; i++)
+    {
+      lex_tokendef *tokendef = &lex_tokendefs[i];
+      if (tokendef->apattern->bol)
+        {
+          has_bol_anchors = 1;
+        }
+      if (tokendef->apattern->eol)
+        {
+          has_eol_anchors = 1;
+        }
+      if (tokendef->actions)
+        {
+          if (tokendef->actions->mode_push || tokendef->actions->mode_pop)
+            {
+              has_mode_push = 1;
+            }
+          if (tokendef->actions->expect_mode_pop)
+            {
+              has_expect_mode_pops = 1;
+            }
+        }
+    }
+  MUSCLE_INSERT_INT("lex_has_bol_anchors", has_bol_anchors);
+  MUSCLE_INSERT_INT("lex_has_eol_anchors", has_eol_anchors);
+  MUSCLE_INSERT_INT("lex_has_mode_push", has_mode_push);
+  MUSCLE_INSERT_INT("lex_has_expect_mode_pops", has_expect_mode_pops);
+}
+
+static void
+lex_gram_output (FILE *out)
+{
+  if (!lex_enabled)
+    {
+      return;
+    }
+
+  // b4_lex_token(i, actions). The action block to run when a token is
+  // matched. This definition doesn't use a muscle because it is not
+  // fully escaped.
+  for (int i = 0; i < lex_ntokendefs; i++)
+    {
+      lex_tokendef *tdef = &lex_tokendefs[i];
+
+      fprintf (out,
+               "m4_define([b4_lex_token(%d, actions)],\n[",
+               i);
+
+      if (tdef->actions)
+        {
+          if (tdef->actions->error != NULL)
+            {
+              fprintf (out,
+                       "b4_lex_action_error(");
+              output_quotedstr (out, tdef->actions->error);
+              fprintf (out, ")\n");
+            }
+          if (tdef->actions->mode_change != NULL)
+            {
+              fprintf (out,
+                       "b4_lex_action_mode_change(%d)\n",
+                       tdef->actions->mode_change->mode->start_state);
+            }
+          if (tdef->actions->mode_push != NULL)
+            {
+              fprintf (out,
+                       "b4_lex_action_mode_push(%d)\n",
+                       tdef->actions->mode_push->mode->start_state);
+            }
+          if (tdef->actions->mode_pop)
+            {
+              fprintf (out,
+                       "b4_lex_action_mode_pop\n");
+            }
+	  if (tdef->actions->expect_mode_pop)
+	    {
+	      fprintf (out,
+		       "b4_lex_action_expect_mode_pop\n");
+	    }
+          if (tdef->actions->skip)
+            {
+              fprintf (out,
+                       "b4_lex_action_skip\n");
+            }
+        }
+
+      fputs ("])\n", out);
+    }
+}
 
 /*-------------------------------------------------------.
 | Compare two symbols by type-name, and then by number.  |
@@ -734,6 +1044,7 @@ muscles_output (FILE *out)
   type_names_output (out);
   start_symbols_output (out);
   user_actions_output (out);
+  lex_gram_output (out);
   /* Must be last.  */
   muscles_m4_output (out);
 }
@@ -914,6 +1225,7 @@ prepare (void)
 void
 output (void)
 {
+  obstack_init (&key_obstack);
   obstack_init (&format_obstack);
 
   prepare_symbols ();
@@ -921,6 +1233,7 @@ output (void)
   prepare_states ();
   prepare_actions ();
   prepare_symbol_definitions ();
+  prepare_lex_gram ();
 
   prepare ();
 
@@ -933,4 +1246,5 @@ output (void)
     unlink_generated_sources ();
 
   obstack_free (&format_obstack, NULL);
+  obstack_free (&key_obstack, NULL);
 }
